@@ -311,6 +311,12 @@ $('monStart').addEventListener('click', async () => {
     await new Promise((r) => setTimeout(r, 120));
     await monPort.setSignals({ dataTerminalReady: false, requestToSend: false });
     monStopping = false; monSetButtons(true);
+    setStatus('monStatus', 'busy', 'Жду сообщений от трекера…');
+    let gotBytes = 0;
+    const silence = setTimeout(() => {
+      if (!gotBytes && !monStopping) setStatus('monStatus', 'err',
+        'Трекер пока молчит. Нажмите на плате кнопку RST (сброс) и подождите минуту.');
+    }, 15000);
     const decoder = new TextDecoder();
     while (monPort.readable && !monStopping) {
       monReader = monPort.readable.getReader();
@@ -318,12 +324,14 @@ $('monStart').addEventListener('click', async () => {
         for (;;) {
           const { value, done } = await monReader.read();
           if (done) break;
+          if (++gotBytes === 1) setStatus('monStatus', 'busy', 'Трекер на связи, журнал идёт…');
           monAppend(decoder.decode(value, { stream: true }).replace(/\r/g, ''));
           $('monCopy').disabled = false;
         }
       } catch (e) { if (!monStopping) monAppend('\n[связь с трекером прервалась: ' + e.message + ']\n'); break; }
       finally { monReader.releaseLock(); }
     }
+    clearTimeout(silence);
   } catch (err) {
     setStatus('monStatus', 'err', 'Не удалось открыть журнал: ' + err.message);
   }
