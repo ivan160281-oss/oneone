@@ -39,6 +39,9 @@ fi
 venv/bin/python -m pip install --quiet --upgrade pip
 venv/bin/python -m pip install --quiet -r requirements.txt
 
+# An old engineering database uploaded into ~/altgeo-data/eng/import/ replaces the current one.
+bash "$APP_DIR/deploy/regru/import_eng_db.sh" "$HOME/altgeo-data/eng"
+
 # Passenger takes the parent of the site folder (~/www) as the app root unless
 # the panel sets it, so the entry point goes in both places.
 APP_ROOT=$(dirname "$SITE_DIR")
