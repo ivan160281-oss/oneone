@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Puts an old engineering database (wifigps.db from the previous server) in
 # place. The person uploads it with the hosting's file manager into
-# ~/altgeo-data/eng/import/ under any name ending in .db; update.sh runs this.
+# ~/altgeo-data/eng/import/ (or ~/altgeo/eng/import/) under any name ending in .db; update.sh runs this.
 set -euo pipefail
 DATA_DIR="$1"
-IMPORT_DIR="$DATA_DIR/import"
-[ -d "$IMPORT_DIR" ] || exit 0
-NEW=$(ls -t "$IMPORT_DIR"/*.db 2>/dev/null | head -1 || true)
+# ~/altgeo/eng/import is accepted too: in the file manager it looks just as right.
+NEW=$(ls -t "$DATA_DIR/import"/*.db "$HOME/altgeo/eng/import"/*.db 2>/dev/null | head -1 || true)
 [ -n "$NEW" ] || exit 0
 
 APP_PY="$HOME/altgeo/venv/bin/python"
