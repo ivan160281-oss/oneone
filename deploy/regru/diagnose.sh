@@ -20,8 +20,12 @@ body = passenger_wsgi.application(env, lambda s, h, e=None: out.append(s))
 print(out, b"".join(body)[:80])
 PY
 ) 2>&1 | tail -20
+echo "== live site"
+curl -s -m 30 -D - "http://$DOMAIN/" | head -30
+echo "== passenger"
+ls -la /opt/python 2>/dev/null; command -v python3 python; python3 -V
 echo "== logs"
 ls -la "$HOME/logs" 2>/dev/null
 for f in $(ls -t "$HOME"/logs/*error* "$HOME"/logs/*"$DOMAIN"* 2>/dev/null | head -4); do
-  echo "--- $f"; tail -40 "$f"
+  echo "--- $f"; tail -15 "$f"
 done
