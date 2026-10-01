@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ALTGEO — администратор</title>
+<link rel="stylesheet" href="/static/leaflet/leaflet.css">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="logo">ALT<span>GEO</span></div>
+  <nav class="tabs">
+    <button data-tab="clients">Клиенты</button>
+    <button data-tab="sources">Источники данных</button>
+  </nav>
+  <span class="who" id="who"></span>
+  <button class="ghost" onclick="logout()">Выйти</button>
+</header>
+
+<main>
+  <section data-tab="clients">
+    <div class="panel">
+      <h2>Новый клиент</h2>
+      <div class="row">
+        <div><label for="new-login">Логин</label><input id="new-login" maxlength="60" placeholder="латиница, цифры, _ . @ -"></div>
+        <div><label for="new-name">Имя или организация</label><input id="new-name" maxlength="100"></div>
+        <button id="new-go">Создать</button>
+      </div>
+      <div class="err" id="new-err"></div>
+      <div id="cred" hidden>
+        <p>Передайте клиенту данные для входа. Пароль показывается один раз.</p>
+        <div class="secret" id="cred-text"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Клиенты</h2>
+      <table>
+        <thead><tr><th>Логин</th><th>Имя</th><th>Устройства</th><th>Статус</th><th></th></tr></thead>
+        <tbody id="client-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section data-tab="sources" hidden>
+    <div class="panel">
+      <h2>Кто присылает данные</h2>
+      <p class="muted" style="font-size:13px">shared — трекеры с SD-картой на общем пароле WIFIGPS_PASSWORD. imei:… без владельца — GSM-трекеры, которые ещё никто не добавил.</p>
+      <table>
+        <thead><tr><th>Источник</th><th>Владелец</th><th>Точек (с GPS)</th><th>Последние данные</th><th></th></tr></thead>
+        <tbody id="source-rows"></tbody>
+      </table>
+    </div>
+    <div class="panel"><div class="muted" id="src-title">Выберите источник, чтобы увидеть трек ALTGEO за последние сутки.</div></div>
+    <div id="src-map" class="map"></div>
+  </section>
+</main>
+
+<script src="/static/leaflet/leaflet.js"></script>
+<script src="/static/api.js"></script>
+<script src="/static/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ALTGEO — вход</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="login-wrap">
+  <form class="login" id="form" autocomplete="on">
+    <div class="logo">ALT<span>GEO</span></div>
+    <p class="muted">Войдите с логином и паролем, которые выдал администратор.</p>
+    <label for="login">Логин</label>
+    <input id="login" name="username" autocomplete="username" required autofocus>
+    <label for="password">Пароль</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit" id="submit">Войти</button>
+    <div class="err" id="err" role="alert"></div>
+  </form>
+</div>
+<script src="/static/api.js"></script>
+<script>
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submit'), err = document.getElementById('err');
+  btn.disabled = true; err.textContent = '';
+  try {
+    const r = await api('POST', '/api/auth/login', {
+      login: document.getElementById('login').value,
+      password: document.getElementById('password').value,
+    });
+    location.href = r.redirect;
+  } catch (ex) {
+    err.textContent = ex.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

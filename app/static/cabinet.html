@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ALTGEO — кабинет</title>
+<link rel="stylesheet" href="/static/leaflet/leaflet.css">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="logo">ALT<span>GEO</span></div>
+  <nav class="tabs">
+    <button data-tab="live">Онлайн</button>
+    <button data-tab="reports">Отчёты</button>
+    <button data-tab="devices">Устройства</button>
+    <button data-tab="profile">Профиль</button>
+  </nav>
+  <span class="who" id="who"></span>
+  <button class="ghost" onclick="logout()">Выйти</button>
+</header>
+
+<main>
+  <section data-tab="live">
+    <div class="layout">
+      <div class="panel">
+        <h2>Мои устройства</h2>
+        <ul class="list" id="live-list"></ul>
+        <p class="muted" id="live-empty" hidden>Устройств пока нет. Добавьте первое во вкладке «Устройства».</p>
+        <p class="muted" style="font-size:13px">Карта обновляется каждые 20 секунд. Линия показывает последние 2 часа.</p>
+      </div>
+      <div id="live-map" class="map"></div>
+    </div>
+  </section>
+
+  <section data-tab="reports" hidden>
+    <div class="panel">
+      <h2>Отчёт по маршруту</h2>
+      <div class="row">
+        <div><label for="rep-device">Устройство</label><select id="rep-device"></select></div>
+        <div><label for="rep-from">С</label><input id="rep-from" type="datetime-local"></div>
+        <div><label for="rep-to">По</label><input id="rep-to" type="datetime-local"></div>
+        <button id="rep-go">Построить</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" data-range="today">Сегодня</button>
+        <button class="ghost" data-range="yesterday">Вчера</button>
+        <button class="ghost" data-range="week">7 дней</button>
+      </div>
+      <div class="err" id="rep-err"></div>
+      <div id="rep-result" hidden>
+        <div class="stats" id="rep-stats"></div>
+        <a id="rep-gpx" href="#">Скачать трек (GPX)</a>
+      </div>
+    </div>
+    <div id="rep-map" class="map"></div>
+    <div class="panel" id="rep-stops-panel" hidden style="margin-top:16px">
+      <h2>Стоянки</h2>
+      <table><thead><tr><th>Начало</th><th>Конец</th><th>Длительность</th></tr></thead><tbody id="rep-stops"></tbody></table>
+    </div>
+  </section>
+
+  <section data-tab="devices" hidden>
+    <div class="panel">
+      <h2>Устройства</h2>
+      <table>
+        <thead><tr><th>Название</th><th>Тип</th><th>Последние данные</th><th></th></tr></thead>
+        <tbody id="dev-rows"></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>Добавить устройство</h2>
+      <div class="row">
+        <div><label for="add-name">Название</label><input id="add-name" maxlength="60" placeholder="Например, Машина"></div>
+        <div><label for="add-kind">Тип</label>
+          <select id="add-kind">
+            <option value="imei">GSM-трекер (по IMEI)</option>
+            <option value="sd">Трекер с SD-картой</option>
+          </select></div>
+        <div id="add-imei-wrap"><label for="add-imei">IMEI (15 цифр)</label><input id="add-imei" inputmode="numeric" maxlength="15"></div>
+        <button id="add-go">Добавить</button>
+      </div>
+      <p class="muted" id="add-hint" style="font-size:13px">IMEI видно в настройках Bluetooth любого телефона рядом с трекером: устройство называется ALTGEO_IMEI_ и 15 цифр.</p>
+      <div class="err" id="add-err"></div>
+      <div id="add-secret" hidden>
+        <p>Впишите эти строки в файл <b>/WIFIGPS/sync_config.txt</b> на SD-карте трекера (вместо прежних server_url и sync_password). Пароль показывается один раз.</p>
+        <div class="secret" id="add-secret-text"></div>
+      </div>
+    </div>
+  </section>
+
+  <section data-tab="profile" hidden>
+    <div class="panel" style="max-width:420px">
+      <h2>Смена пароля</h2>
+      <label for="pw-old">Текущий пароль</label><input id="pw-old" type="password" autocomplete="current-password">
+      <label for="pw-new">Новый пароль (не короче 6 символов)</label><input id="pw-new" type="password" autocomplete="new-password">
+      <button id="pw-go" style="margin-top:14px">Сменить</button>
+      <div class="err" id="pw-err"></div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/leaflet/leaflet.js"></script>
+<script src="/static/api.js"></script>
+<script src="/static/cabinet.js"></script>
+</body>
+</html>
