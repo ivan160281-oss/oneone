@@ -66,6 +66,10 @@
   .needs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 28px; }
   .need { color: var(--dim); font-size: .88rem; border-top: 1px solid var(--line); padding-top: 12px; }
   .need b { color: var(--text); display: block; margin-bottom: 2px; }
+  .monitor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  #serial { background: #080a0f; border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: 16px; height: 280px;
+            overflow-y: auto; white-space: pre-wrap; font: .78rem/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--dim); }
+  #serial .hl { color: var(--warn); } #serial .good { color: var(--ok); }
   @media (max-width: 560px) { h1 { font-size: 1.6rem; } .step { padding: 18px; } .wrap { padding-top: 28px; } }
 </style>
 </head>
@@ -125,6 +129,22 @@
     <div class="pct" id="pct">0%</div>
     <div class="status" id="flashStatus"></div>
     <details class="log"><summary>Подробный журнал</summary><div id="log">Ожидание…</div></details>
+  </section>
+
+  <section class="step" id="monitor">
+    <h2><span class="num">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg>
+    </span>Журнал трекера</h2>
+    <p class="hint">Показывает, что трекер сообщает о себе: есть ли GSM-связь и что ответил сервер.
+      Подключите трекер кабелем и нажмите «Открыть журнал». Трекер перезапустится, и журнал пойдёт с самого начала.
+      Через минуту-две нажмите «Скопировать» и пришлите текст в чат.</p>
+    <div class="btns">
+      <button class="btn" id="monStart">Открыть журнал</button>
+      <button class="btn ghost" id="monStop" hidden>Остановить</button>
+      <button class="btn ghost" id="monCopy" disabled>Скопировать</button>
+    </div>
+    <div class="status" id="monStatus"></div>
+    <div id="serial" hidden></div>
   </section>
 
   <div class="needs">
@@ -240,6 +260,86 @@ $('flashBtn').addEventListener('click', async () => {
     $('disconnectBtn').disabled = false;
   }
 });
+
+// ---- Serial monitor: plain Web Serial at 115200, no esptool involved ----
+let monPort = null, monReader = null, monStopping = false, monText = '';
+const HINTS = [
+  [/Sync ok/, 'good', 'Связь с сервером в порядке: данные отправлены и подтверждены.'],
+  [/Sync failed, HTTP -3/, 'hl', 'Трекер отправил данные, но ответ сервера не пришёл (истекло время ожидания).'],
+  [/Sync failed, HTTP -1/, 'hl', 'Трекер не смог установить соединение с сервером.'],
+  [/Sync failed, HTTP -4/, 'hl', 'Сервер ответил чем-то непонятным для трекера.'],
+  [/Sync failed, HTTP 401/, 'hl', 'Сервер не принял пароль трекера (код 401).'],
+  [/Sync failed, HTTP (\d+)/, 'hl', 'Сервер ответил ошибкой, код $1.'],
+  [/not valid JSON/, 'hl', 'Сервер ответил, но не в том формате, который ждёт трекер.'],
+  [/Cannot reach the server/, 'hl', 'Трекер не может достучаться до сервера.'],
+  [/GPRS connect failed/, 'hl', 'Нет мобильного интернета: проверьте SIM-карту, баланс и антенну.'],
+  [/Modem did not respond|Modem restart also failed/, 'hl', 'Модем не отвечает: проверьте питание и SIM-карту.'],
+  [/LittleFS mount failed/, 'hl', 'Не открылась внутренняя память трекера.'],
+];
+function monSetButtons(running) {
+  $('monStart').hidden = running; $('monStop').hidden = !running;
+  $('connectBtn').disabled = running || !('serial' in navigator);
+  $('monCopy').disabled = !monText;
+}
+function monAppend(chunk) {
+  monText += chunk;
+  const box = $('serial');
+  const lines = chunk.split('\n');
+  lines.forEach((line, i) => {
+    const hit = HINTS.find(([re]) => re.test(line));
+    const node = hit ? document.createElement('span') : document.createTextNode(line);
+    if (hit) {
+      node.className = hit[1]; node.textContent = line;
+      setStatus('monStatus', hit[1] === 'good' ? 'ok' : 'err', hit[2].replace('$1', (line.match(hit[0]) || [])[1] || ''));
+    }
+    box.appendChild(node);
+    if (i < lines.length - 1) box.appendChild(document.createTextNode('\n'));
+  });
+  box.scrollTop = box.scrollHeight;
+}
+$('monStart').addEventListener('click', async () => {
+  try {
+    if (transport) { try { await transport.disconnect(); } catch (e) {} transport = null; esploader = null;
+      $('connectBtn').hidden = false; $('disconnectBtn').hidden = true; setStatus('connStatus', '', 'Трекер не подключён'); refreshSteps(); }
+    const known = await navigator.serial.getPorts();
+    monPort = known.length === 1 ? known[0] : await navigator.serial.requestPort({});
+    await monPort.open({ baudRate: 115200 });
+    $('serial').hidden = false; $('serial').textContent = ''; monText = '';
+    setStatus('monStatus', 'busy', 'Перезапускаю трекер и читаю журнал…');
+    // EN is wired to RTS on these boards: pulse it to restart into the app (DTR off keeps normal boot).
+    await monPort.setSignals({ dataTerminalReady: false, requestToSend: true });
+    await new Promise((r) => setTimeout(r, 120));
+    await monPort.setSignals({ dataTerminalReady: false, requestToSend: false });
+    monStopping = false; monSetButtons(true);
+    const decoder = new TextDecoder();
+    while (monPort.readable && !monStopping) {
+      monReader = monPort.readable.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await monReader.read();
+          if (done) break;
+          monAppend(decoder.decode(value, { stream: true }).replace(/\r/g, ''));
+          $('monCopy').disabled = false;
+        }
+      } catch (e) { if (!monStopping) monAppend('\n[связь с трекером прервалась: ' + e.message + ']\n'); break; }
+      finally { monReader.releaseLock(); }
+    }
+  } catch (err) {
+    setStatus('monStatus', 'err', 'Не удалось открыть журнал: ' + err.message);
+  }
+  try { if (monPort) await monPort.close(); } catch (e) {}
+  monPort = null; monSetButtons(false);
+});
+$('monStop').addEventListener('click', async () => {
+  monStopping = true;
+  try { if (monReader) await monReader.cancel(); } catch (e) {}
+  if (!$('monStatus').textContent) setStatus('monStatus', '', 'Журнал остановлен');
+});
+$('monCopy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(monText); setStatus('monStatus', 'ok', 'Журнал скопирован. Вставьте его в чат.'); }
+  catch (e) { setStatus('monStatus', 'err', 'Не получилось скопировать: выделите текст вручную.'); }
+});
+if (!('serial' in navigator)) $('monStart').disabled = true;
 </script>
 </body>
 </html>
