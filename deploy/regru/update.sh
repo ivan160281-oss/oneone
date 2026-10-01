@@ -38,8 +38,15 @@ fi
 venv/bin/python -m pip install --quiet --upgrade pip
 venv/bin/python -m pip install --quiet -r requirements.txt
 
-sed -e "s|__APP_DIR__|$APP_DIR|" -e "s|__ENV_FILE__|$ENV_FILE|" \
-  deploy/regru/passenger_wsgi.py > "$SITE_DIR/passenger_wsgi.py"
+# Passenger takes the parent of the site folder (~/www) as the app root unless
+# the panel sets it, so the entry point goes in both places.
+APP_ROOT=$(dirname "$SITE_DIR")
+for d in "$SITE_DIR" "$APP_ROOT"; do
+  sed -e "s|__APP_DIR__|$APP_DIR|" -e "s|__ENV_FILE__|$ENV_FILE|" \
+    deploy/regru/passenger_wsgi.py > "$d/passenger_wsgi.py"
+  mkdir -p "$d/tmp"
+  touch "$d/tmp/restart.txt"
+done
 
 FORCE_HTTPS=$(grep -E '^FORCE_HTTPS=' "$ENV_FILE" | cut -d= -f2 || true)
 {
@@ -61,11 +68,9 @@ done
 
 # An early version left its database in the public folder: move it out of reach.
 for f in "$SITE_DIR"/*.db "$SITE_DIR"/*.db-wal "$SITE_DIR"/*.db-shm; do
-  [ -f "$f" ] && mv "$f" "$HOME/altgeo-data/old-site-$(basename "$f")"
+  if [ -f "$f" ]; then mv "$f" "$HOME/altgeo-data/old-site-$(basename "$f")"; fi
 done
 
-mkdir -p "$SITE_DIR/tmp"
-touch "$SITE_DIR/tmp/restart.txt"
 echo "Deployed to $DOMAIN"
 
 # Check that the live site is the app and not a hosting placeholder (those answer 200 too).
