@@ -57,6 +57,20 @@ ADMIN_LOGIN=admin ADMIN_PASSWORD=... WIFIGPS_PASSWORD=... uvicorn app.main:app -
 
 Карта использует тайлы OpenStreetMap, Leaflet лежит в `app/static/leaflet`.
 
+## Автоматический деплой с GitHub
+
+Каждый пуш в ветку `main` запускает тесты, и если они прошли, GitHub Actions копирует код на сервер по SSH и перезапускает сервис (`.github/workflows/deploy.yml`). Нужен VPS с Ubuntu или Debian и доступом root по SSH, A-запись домена должна указывать на IP сервера.
+
+1. Создайте ключ для деплоя на своём компьютере: `ssh-keygen -t ed25519 -f altgeo_deploy -N ""`.
+2. На сервере под root выполните `deploy/setup.sh`, передав домен, пароли и публичный ключ (`altgeo_deploy.pub`), пример в начале скрипта. Скрипт ставит Python и Caddy (HTTPS от Let's Encrypt), создаёт пользователя `altgeo` и сервис systemd.
+3. В репозитории на GitHub: Settings → Secrets and variables → Actions, добавьте секреты:
+   - `DEPLOY_HOST` — IP или домен сервера;
+   - `DEPLOY_SSH_KEY` — содержимое приватного ключа `altgeo_deploy`;
+   - `DEPLOY_PORT` — порт SSH, если он не 22.
+4. Сделайте пуш в `main` или запустите workflow вручную во вкладке Actions.
+
+База данных лежит в `/var/lib/altgeo` и деплоем не затрагивается.
+
 ## Тесты
 
 ```sh
