@@ -1,0 +1,66 @@
+name: Firmware to the site
+
+# Takes the latest firmware builds from the two tracker repositories and makes
+# them the current firmware on the engineering Tracker page (/eng/tracker).
+# Runs daily and on demand; a version that is already there is skipped.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the latest builds
+        run: |
+          mkdir -p fw
+          fetch() {  # repo artifact key
+            local meta id sha date
+            meta=$(gh api "repos/ivan160281-oss/$1/actions/artifacts?name=$2&per_page=10" \
+              -q '[.artifacts[] | select(.expired | not)][0] | [.id, .workflow_run.head_sha, .created_at] | @tsv')
+            [ -n "$meta" ] || { echo "No build of $2 in $1"; return 1; }
+            read -r id sha date <<<"$meta"
+            gh api "repos/ivan160281-oss/$1/actions/artifacts/$id/zip" > "fw/$3.zip"
+            mkdir -p "fw/$3" && unzip -q -o "fw/$3.zip" -d "fw/$3"
+            local bin
+            bin=$(find "fw/$3" -name '*.merged.bin' | head -1)
+            [ -n "$bin" ] || { echo "No .merged.bin in $2"; find "fw/$3"; return 1; }
+            mv "$bin" "fw/$3.bin"
+            echo "$3 ${date:0:10}-${sha:0:7} $1" >> fw/list.txt
+            ls -la "fw/$3.bin"
+          }
+          fetch wifigps tpager-gps-wifi-tracker-bin devtr
+          fetch WIFI_GPS_T-CALL altgeo-gsm-tracker-bin altgeo-gsm
+          cat fw/list.txt
+      - name: Set up SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          python3 - <<'PY'
+          import os, re, textwrap
+          raw = os.environ["DEPLOY_SSH_KEY"].replace("\r", "")
+          m = re.search(r"-----BEGIN ([A-Z ]+)-----(.*?)-----END \1-----", raw, re.S)
+          body = "".join(m.group(2).split())
+          key = f"-----BEGIN {m.group(1)}-----\n" + "\n".join(textwrap.wrap(body, 70)) + f"\n-----END {m.group(1)}-----\n"
+          with open(os.path.expanduser("~/.ssh/id_deploy"), "w") as f:
+              f.write(key)
+          PY
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Install on the site
+        run: |
+          SSH="ssh -i $HOME/.ssh/id_deploy -p $DEPLOY_PORT $DEPLOY_USER@$DEPLOY_HOST"
+          while read -r key version repo; do
+            $SSH "mkdir -p ~/altgeo-data/eng/inbox && cat > ~/altgeo-data/eng/inbox/$key.bin" < "fw/$key.bin"
+            $SSH "~/altgeo/venv/bin/python ~/altgeo/eng/tools/install_firmware.py --data-dir ~/altgeo-data/eng \
+              --key $key --version $version --file ~/altgeo-data/eng/inbox/$key.bin \
+              --notes 'Сборка GitHub Actions из $repo' && rm -f ~/altgeo-data/eng/inbox/$key.bin"
+          done < fw/list.txt
