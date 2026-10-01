@@ -65,11 +65,26 @@ jobs:
           done
       - name: Install on the site
         run: |
-          SSH="ssh -i $HOME/.ssh/id_deploy -p $DEPLOY_PORT $DEPLOY_USER@$DEPLOY_HOST"
-          # ssh reads stdin, so the list comes in on fd 3.
-          while read -r key version repo <&3; do
-            $SSH "mkdir -p ~/altgeo-data/eng/inbox && cat > ~/altgeo-data/eng/inbox/$key.bin" < "fw/$key.bin"
-            $SSH -n "~/altgeo/venv/bin/python ~/altgeo/eng/tools/install_firmware.py --data-dir ~/altgeo-data/eng \
-              --key $key --version $version --file ~/altgeo-data/eng/inbox/$key.bin \
-              --notes 'Сборка GitHub Actions из $repo' && rm -f ~/altgeo-data/eng/inbox/$key.bin"
-          done 3< fw/list.txt
+          # The hosting resets SSH connections now and then: retry, and use few of them.
+          ssh_retry() {
+            for i in 1 2 3 4 5; do
+              ssh -i "$HOME/.ssh/id_deploy" -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "$@" && return 0
+              [ $? -eq 255 ] || return 1
+              sleep $((i * 10))
+            done
+            return 1
+          }
+          ssh_retry -n "~/altgeo/venv/bin/python -c \"import sqlite3, os; c = sqlite3.connect(os.path.expanduser('~/altgeo-data/eng/wifigps.db')); [print(k, v) for k, v in c.execute('SELECT t.key, f.version FROM device_firmwares f JOIN device_types t ON t.id = f.device_type_id')]\"" > fw/installed.txt
+          : > fw/new.txt
+          while read -r key version repo; do
+            if grep -qx "$key $version" fw/installed.txt; then echo "$key $version: already installed"
+            else echo "$key $version $repo" >> fw/new.txt; fi
+          done < fw/list.txt
+          [ -s fw/new.txt ] || { echo "Nothing new"; exit 0; }
+          files=$(cut -d' ' -f1 fw/new.txt | sed 's/$/.bin/')
+          (cd fw && tar czf ../upload.tgz new.txt $files)
+          ssh_retry "rm -rf ~/altgeo-data/eng/inbox && mkdir -p ~/altgeo-data/eng/inbox && cd ~/altgeo-data/eng/inbox && tar xzf - && \
+            while read -r key version repo; do \
+              ~/altgeo/venv/bin/python ~/altgeo/eng/tools/install_firmware.py --data-dir ~/altgeo-data/eng \
+                --key \$key --version \$version --file \$key.bin --notes \"Сборка GitHub Actions из \$repo\" || exit 1; \
+            done < new.txt && cd && rm -rf ~/altgeo-data/eng/inbox" < upload.tgz
