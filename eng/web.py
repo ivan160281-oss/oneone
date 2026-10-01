@@ -498,20 +498,14 @@ def _firmware_dir_for_type(device_type_id):
 
 @app.route("/tracker")
 def tracker_page():
-    """
-    The device-types/firmware catalog - reachable from both the engineering
-    nav and the user dashboard (see _DUAL_ACCESS_ENDPOINTS). Everyone sees
-    the same list of device types and their current firmware; engineers
-    additionally get the "add device type" / "upload firmware" forms,
-    rendered conditionally in the template based on session['authenticated'].
-    """
+    """Flashing a tracker from the browser (Web Serial, esptool-js). The
+    firmware itself arrives from the GitHub builds (.github/workflows/
+    firmware.yml), so the page offers no file uploads or downloads."""
     with db.get_conn() as conn:
         device_types = db.get_all_device_types(conn)
         for dt in device_types:
-            dt["firmwares"] = db.get_firmwares_for_type(conn, dt["id"])
             dt["current"] = db.get_current_firmware(conn, dt["id"])
-    is_engineer = bool(True)
-    return render_template("tracker.html", device_types=device_types, is_engineer=is_engineer)
+    return render_template("tracker.html", device_types=device_types)
 
 
 @app.route("/tracker/device_types/add", methods=["POST"])
@@ -595,13 +589,7 @@ def tracker_firmware_download(firmware_id):
 
 @app.route("/tracker/flash")
 def tracker_flash_page():
-    """Browser-based flashing (Web Serial, esptool-js) for ESP32-based
-    trackers - no software install needed, Chrome/Edge only."""
-    with db.get_conn() as conn:
-        device_types = db.get_all_device_types(conn)
-        for dt in device_types:
-            dt["current"] = db.get_current_firmware(conn, dt["id"])
-    return render_template("tracker_flash.html", device_types=device_types)
+    return redirect(url_for("tracker_page"))
 
 
 @app.route("/admin/reprocess", methods=["POST"])
