@@ -303,7 +303,7 @@ $('monStart').addEventListener('click', async () => {
       $('connectBtn').hidden = false; $('disconnectBtn').hidden = true; setStatus('connStatus', '', 'Трекер не подключён'); refreshSteps(); }
     // Always ask: an earlier permitted port may belong to another device.
     monPort = await navigator.serial.requestPort({});
-    await monPort.open({ baudRate: 115200 });
+    await monPort.open({ baudRate: 115200, bufferSize: 65536 });  // default 255 B drops lines in bursts
     $('serial').hidden = false; $('serial').textContent = ''; monText = '';
     setStatus('monStatus', 'busy', 'Перезапускаю трекер и читаю журнал…');
     // EN is wired to RTS on these boards: pulse it to restart into the app (DTR off keeps normal boot).
