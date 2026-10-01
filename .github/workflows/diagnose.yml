@@ -1,0 +1,35 @@
+name: Diagnose hosting
+
+# Manual, read-only: prints the site's config, a test request through the app
+# and the hosting's error logs. Does not change anything on the server.
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_DOMAIN: ${{ vars.DEPLOY_DOMAIN || 'altgeo.su' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          python3 - <<'PY'
+          import os, re, textwrap
+          raw = os.environ["DEPLOY_SSH_KEY"].replace("\r", "")
+          m = re.search(r"-----BEGIN ([A-Z ]+)-----(.*?)-----END \1-----", raw, re.S)
+          body = "".join(m.group(2).split())
+          key = f"-----BEGIN {m.group(1)}-----\n" + "\n".join(textwrap.wrap(body, 70)) + f"\n-----END {m.group(1)}-----\n"
+          with open(os.path.expanduser("~/.ssh/id_deploy"), "w") as f:
+              f.write(key)
+          PY
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Diagnose
+        run: ssh -i ~/.ssh/id_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "bash -s $DEPLOY_DOMAIN" < deploy/regru/diagnose.sh
