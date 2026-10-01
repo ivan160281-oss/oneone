@@ -66,9 +66,10 @@ jobs:
       - name: Install on the site
         run: |
           SSH="ssh -i $HOME/.ssh/id_deploy -p $DEPLOY_PORT $DEPLOY_USER@$DEPLOY_HOST"
-          while read -r key version repo; do
+          # ssh reads stdin, so the list comes in on fd 3.
+          while read -r key version repo <&3; do
             $SSH "mkdir -p ~/altgeo-data/eng/inbox && cat > ~/altgeo-data/eng/inbox/$key.bin" < "fw/$key.bin"
-            $SSH "~/altgeo/venv/bin/python ~/altgeo/eng/tools/install_firmware.py --data-dir ~/altgeo-data/eng \
+            $SSH -n "~/altgeo/venv/bin/python ~/altgeo/eng/tools/install_firmware.py --data-dir ~/altgeo-data/eng \
               --key $key --version $version --file ~/altgeo-data/eng/inbox/$key.bin \
               --notes 'Сборка GitHub Actions из $repo' && rm -f ~/altgeo-data/eng/inbox/$key.bin"
-          done < fw/list.txt
+          done 3< fw/list.txt
