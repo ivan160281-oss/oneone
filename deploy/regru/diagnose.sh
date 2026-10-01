@@ -4,6 +4,9 @@ DOMAIN="${1:?usage: diagnose.sh <domain>}"
 SITE_DIR="$HOME/www/$DOMAIN"
 cd "$HOME"
 
+echo "== data folders"; ls -laR "$HOME/altgeo-data" 2>&1 | head -60
+echo "== database files anywhere in home"
+find "$HOME" -maxdepth 5 \( -iname '*.db' -o -iname '*wifigps*' -o -iname 'import' \) -not -path '*/venv/*' -printf '%TY-%Tm-%Td %TH:%TM %10s %p\n' 2>/dev/null | sort | tail -30
 echo "== site folder"; ls -la "$SITE_DIR"
 echo "== .htaccess"; cat "$SITE_DIR/.htaccess"
 echo "== python"; "$HOME/altgeo/venv/bin/python" -V
