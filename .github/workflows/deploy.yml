@@ -2,49 +2,57 @@ name: Test and deploy
 
 on:
   push:
-    branches: [main]
+    # claude/project-thread-adgqlj is the repo's only (default) branch until main exists.
+    branches: [main, claude/project-thread-adgqlj]
   pull_request:
   workflow_dispatch:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # 22.04 still has Python 3.8, the oldest version the hosting may run.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.8"
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
 
+  # Deploys to REG.RU shared hosting (Passenger). See README, "Автоматический деплой".
   deploy:
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     concurrency: deploy
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_DOMAIN: ${{ vars.DEPLOY_DOMAIN || 'altgeo.su' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check deploy secrets
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ]; then
+            echo "::warning::DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY secrets are not set, skipping deploy"
+            echo "SKIP_DEPLOY=1" >> "$GITHUB_ENV"
+          fi
       - name: Set up SSH key
+        if: env.SKIP_DEPLOY != '1'
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
       - name: Copy code to the server
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+        if: env.SKIP_DEPLOY != '1'
         run: |
-          rsync -az --delete \
-            --exclude '.git' --exclude 'tests' --exclude 'venv' --exclude '*.db*' \
-            -e "ssh -i ~/.ssh/id_deploy -p $DEPLOY_PORT" \
-            ./ "altgeo@$DEPLOY_HOST:/opt/altgeo/"
-      - name: Restart
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
-        run: ssh -i ~/.ssh/id_deploy -p "$DEPLOY_PORT" "altgeo@$DEPLOY_HOST" 'bash /opt/altgeo/deploy/update.sh'
+          tar czf - --exclude=.git --exclude=tests --exclude='*.db*' . \
+            | ssh -i ~/.ssh/id_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+                'mkdir -p ~/altgeo && tar xzf - -C ~/altgeo'
+      - name: Install and restart
+        if: env.SKIP_DEPLOY != '1'
+        run: ssh -i ~/.ssh/id_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "bash ~/altgeo/deploy/regru/update.sh $DEPLOY_DOMAIN"

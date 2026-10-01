@@ -57,19 +57,39 @@ ADMIN_LOGIN=admin ADMIN_PASSWORD=... WIFIGPS_PASSWORD=... uvicorn app.main:app -
 
 Карта использует тайлы OpenStreetMap, Leaflet лежит в `app/static/leaflet`.
 
-## Автоматический деплой с GitHub
+## Автоматический деплой с GitHub на REG.RU
 
-Каждый пуш в ветку `main` запускает тесты, и если они прошли, GitHub Actions копирует код на сервер по SSH и перезапускает сервис (`.github/workflows/deploy.yml`). Нужен VPS с Ubuntu или Debian и доступом root по SSH, A-запись домена должна указывать на IP сервера.
+Каждый пуш в ветку `main` (а пока её нет, в `claude/project-thread-adgqlj`) запускает тесты, и если они прошли, GitHub Actions копирует код на хостинг по SSH и перезапускает сайт (`.github/workflows/deploy.yml`). Сайт работает на виртуальном хостинге REG.RU через Passenger:
 
-1. Создайте ключ для деплоя на своём компьютере: `ssh-keygen -t ed25519 -f altgeo_deploy -N ""`.
-2. На сервере под root выполните `deploy/setup.sh`, передав домен, пароли и публичный ключ (`altgeo_deploy.pub`), пример в начале скрипта. Скрипт ставит Python и Caddy (HTTPS от Let's Encrypt), создаёт пользователя `altgeo` и сервис systemd.
-3. В репозитории на GitHub: Settings → Secrets and variables → Actions, добавьте секреты:
-   - `DEPLOY_HOST` — IP или домен сервера;
-   - `DEPLOY_SSH_KEY` — содержимое приватного ключа `altgeo_deploy`;
-   - `DEPLOY_PORT` — порт SSH, если он не 22.
+- код лежит в `~/altgeo` (вне папки сайта, поэтому исходники и база не отдаются как файлы);
+- база в `~/altgeo-data`, настройки в `~/altgeo.env`, деплой их не трогает;
+- в папку сайта `~/www/<домен>` кладутся только `passenger_wsgi.py` и `.htaccess` (`deploy/regru/update.sh`).
+
+Настройка, один раз:
+
+1. В Shell-клиенте панели хостинга создайте файл настроек (подставьте свои пароли):
+   ```sh
+   cat > ~/altgeo.env <<'EOF'
+   ADMIN_LOGIN=admin
+   ADMIN_PASSWORD=придумайте-пароль
+   WIFIGPS_PASSWORD=пароль-трекеров
+   EOF
+   chmod 600 ~/altgeo.env
+   ```
+2. Там же создайте ключ для GitHub и выведите его:
+   ```sh
+   mkdir -p ~/.ssh && ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -N "" -C github-deploy \
+     && cat ~/.ssh/github_deploy.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys \
+     && cat ~/.ssh/github_deploy
+   ```
+3. На GitHub в репозитории: Settings → Secrets and variables → Actions → New repository secret:
+   - `DEPLOY_HOST` — адрес сервера, например `server266.hosting.reg.ru`;
+   - `DEPLOY_USER` — логин хостинга, например `u3667098`;
+   - `DEPLOY_SSH_KEY` — всё, что вывела последняя команда шага 2, от `-----BEGIN` до `-----END ... KEY-----` включительно.
+   
+   Если домен не `altgeo.su`, добавьте переменную (вкладка Variables) `DEPLOY_DOMAIN`.
 4. Сделайте пуш в `main` или запустите workflow вручную во вкладке Actions.
-
-База данных лежит в `/var/lib/altgeo` и деплоем не затрагивается.
+5. Выпустите бесплатный SSL-сертификат в панели («SSL-сертификаты»), затем допишите в `~/altgeo.env` строку `FORCE_HTTPS=1` и перезапустите деплой: сайт начнёт перенаправлять на https. Адрес `/api/device/` останется доступен по http, потому что GSM-трекер не умеет переходить по перенаправлениям. Встроенное в панель «перенаправление на HTTPS» не включайте по той же причине.
 
 ## Тесты
 

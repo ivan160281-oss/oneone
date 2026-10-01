@@ -1,4 +1,6 @@
 """Passwords, sessions and login throttling."""
+from __future__ import annotations
+
 import hashlib
 import hmac
 import secrets

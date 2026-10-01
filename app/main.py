@@ -6,6 +6,7 @@ import sqlite3
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
@@ -189,7 +190,7 @@ def _own_device(conn, user, device_id: int):
 class DeviceIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     kind: str = Field(pattern="^(imei|sd)$")
-    imei: str | None = None
+    imei: Optional[str] = None
 
 
 @app.get("/api/my/devices")
@@ -299,8 +300,8 @@ class ClientIn(BaseModel):
 
 
 class ClientPatch(BaseModel):
-    name: str | None = Field(default=None, max_length=100)
-    is_active: bool | None = None
+    name: Optional[str] = Field(default=None, max_length=100)
+    is_active: Optional[bool] = None
 
 
 @app.get("/api/admin/clients")
@@ -375,7 +376,7 @@ def admin_sources(_admin=Depends(admin_user), conn=Depends(db.get_conn)):
 # Tracker ingest (protocol fixed by the firmware in wifigps / WIFI_GPS_T-CALL)
 # ---------------------------------------------------------------------------
 
-def _shared_password_ok(given: str | None) -> bool:
+def _shared_password_ok(given: Optional[str]) -> bool:
     shared = os.environ.get("WIFIGPS_PASSWORD", "")
     return bool(shared and given and hmac.compare_digest(given, shared))
 
@@ -393,7 +394,7 @@ def sd_source(request: Request, conn=Depends(db.get_conn)) -> str:
 
 
 class SyncCheckIn(BaseModel):
-    filenames: list[str] = Field(default_factory=list, max_length=5000)
+    filenames: List[str] = Field(default_factory=list, max_length=5000)
 
 
 @app.post("/api/sync/check")
@@ -404,7 +405,7 @@ def sync_check(body: SyncCheckIn, source=Depends(sd_source), conn=Depends(db.get
 
 
 @app.post("/api/upload")
-async def upload(logfiles: list[UploadFile] = File(...), source=Depends(sd_source), conn=Depends(db.get_conn)):
+async def upload(logfiles: List[UploadFile] = File(...), source=Depends(sd_source), conn=Depends(db.get_conn)):
     stored = []
     for f in logfiles:
         name = os.path.basename(f.filename or "")

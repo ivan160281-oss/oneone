@@ -6,6 +6,8 @@ Two firmwares feed this:
     wifi = ssid|bssid|rssi,...   ble = MAC|rssi,...
   * WIFI_GPS_T-CALL (GSM) posts JSON points with a per-device seq number.
 """
+from __future__ import annotations
+
 import json
 import math
 import re

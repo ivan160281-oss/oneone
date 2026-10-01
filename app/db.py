@@ -1,4 +1,6 @@
 """SQLite storage. One file, created on first start (path from ALTGEO_DB)."""
+from __future__ import annotations
+
 import os
 import sqlite3
 
