@@ -2,14 +2,18 @@ name: Firmware to the site
 
 # Takes the latest firmware builds from the two tracker repositories and makes
 # them the current firmware on the engineering Tracker page (/eng/tracker).
-# Runs daily and on demand; a version that is already there is skipped.
+# Runs daily, after each successful deploy and on demand; a version that is already there is skipped.
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 3 * * *"
+  workflow_run:
+    workflows: ["Test and deploy"]
+    types: [completed]
 
 jobs:
   firmware:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -54,7 +58,11 @@ jobs:
               f.write(key)
           PY
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # The hosting sometimes drops a connection: try a few times.
+          for i in 1 2 3 4 5; do
+            ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null && [ -s ~/.ssh/known_hosts ] && break
+            sleep $((i * 3))
+          done
       - name: Install on the site
         run: |
           SSH="ssh -i $HOME/.ssh/id_deploy -p $DEPLOY_PORT $DEPLOY_USER@$DEPLOY_HOST"

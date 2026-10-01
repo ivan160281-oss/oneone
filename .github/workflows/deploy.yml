@@ -58,7 +58,11 @@ jobs:
               f.write(key)
           PY
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          # The hosting sometimes drops a connection: try a few times.
+          for i in 1 2 3 4 5; do
+            ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null && [ -s ~/.ssh/known_hosts ] && break
+            sleep $((i * 3))
+          done
       - name: Copy code to the server
         if: env.SKIP_DEPLOY != '1'
         run: |
