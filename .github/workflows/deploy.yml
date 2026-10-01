@@ -44,7 +44,19 @@ jobs:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          # Keys copied out of a web terminal often arrive with lines joined by
+          # spaces or with CRLF endings; rebuild the PEM layout ssh expects.
+          python3 - <<'PY'
+          import os, re, textwrap
+          raw = os.environ["DEPLOY_SSH_KEY"].replace("\r", "")
+          m = re.search(r"-----BEGIN ([A-Z ]+)-----(.*?)-----END \1-----", raw, re.S)
+          if not m:
+              raise SystemExit("DEPLOY_SSH_KEY does not look like a private key (no BEGIN/END lines)")
+          body = "".join(m.group(2).split())
+          key = f"-----BEGIN {m.group(1)}-----\n" + "\n".join(textwrap.wrap(body, 70)) + f"\n-----END {m.group(1)}-----\n"
+          with open(os.path.expanduser("~/.ssh/id_deploy"), "w") as f:
+              f.write(key)
+          PY
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
       - name: Copy code to the server
