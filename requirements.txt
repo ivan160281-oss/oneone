@@ -2,3 +2,6 @@ fastapi>=0.115,<1
 uvicorn>=0.30
 python-multipart>=0.0.9
 a2wsgi>=1.10
+# Engineering part (eng/)
+Flask>=3.0,<4
+APScheduler>=3.10,<4

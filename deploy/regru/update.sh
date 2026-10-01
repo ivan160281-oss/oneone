@@ -13,8 +13,9 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "Create $ENV_FILE first (see README: ADMIN_LOGIN, ADMIN_PASSWORD, WIFIGPS_PASSWORD)"
   exit 1
 fi
-mkdir -p "$HOME/altgeo-data"
+mkdir -p "$HOME/altgeo-data/eng"
 grep -q '^ALTGEO_DB=' "$ENV_FILE" || echo "ALTGEO_DB=$HOME/altgeo-data/altgeo.db" >> "$ENV_FILE"
+grep -q '^WIFIGPS_DATA_DIR=' "$ENV_FILE" || echo "WIFIGPS_DATA_DIR=$HOME/altgeo-data/eng" >> "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
 # The system python3 on REG.RU is too old; their newer builds live in /opt/python.

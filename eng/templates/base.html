@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>{% block title %}WiFi/GPS Tracker{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script>
+    // The engineering part lives under a prefix (/eng); page scripts call
+    // fetch('/api/...') as if it were the site root, so prefix those here.
+    (function () {
+        const root = {{ request.script_root|tojson }};
+        const orig = window.fetch.bind(window);
+        window.fetch = (u, o) => orig(typeof u === 'string' && u.startsWith('/') && !u.startsWith(root + '/') ? root + u : u, o);
+    })();
+    </script>
+    <style>
+        html, body { height: 100%; }
+        body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: #111; color: #eee; display: flex; flex-direction: column; min-height: 100vh; }
+        header { background: #1a1a1a; padding: 8px 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #333; flex-shrink: 0; }
+        header nav { display: flex; align-items: center; gap: 18px; }
+        header a { color: #999; text-decoration: none; font-weight: 500; padding: 6px 2px; border-bottom: 2px solid transparent; }
+        header a:hover { color: #eee; }
+        header a.active { color: #ff5555; border-bottom-color: #ff5555; }
+        header .brand { font-weight: 700; color: #ff5555; }
+        header .header-stats { display: flex; align-items: center; gap: 10px; font-size: 0.78em; color: #999; }
+        header .header-stats .num { color: #eee; font-weight: 600; }
+        #headerChart { height: 40px; }
+        main { padding: 20px; max-width: 1100px; margin: 0 auto; width: 100%; box-sizing: border-box; flex: 1; }
+        body.full-bleed main { max-width: none; padding: 0; }
+        .card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #333; }
+        th { color: #999; font-weight: 600; font-size: 0.9em; }
+        .flash { background: #442222; border: 1px solid #663333; padding: 10px 14px; border-radius: 6px; margin: 16px 20px 0; }
+        input[type=file], input[type=text], input[type=number], select, button { font-size: 1em; padding: 8px 12px; border-radius: 6px; border: 1px solid #444; background: #222; color: #eee; }
+        button { background: #ff5555; color: #111; border: none; font-weight: 600; cursor: pointer; }
+        button:hover { background: #ff7777; }
+        .ok { color: #6ecb63; }
+        .bad { color: #e0743c; }
+    </style>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+<header>
+    <nav>
+        <span class="brand">WiFi/GPS Tracker</span>
+        <a href="{{ url_for('reports') }}" class="{{ 'active' if request.endpoint == 'reports' else '' }}">Reports</a>
+        <a href="{{ url_for('roadmap') }}" class="{{ 'active' if request.endpoint == 'roadmap' else '' }}">Roadmap</a>
+        <a href="{{ url_for('map_view') }}" class="{{ 'active' if request.endpoint == 'map_view' else '' }}">Map</a>
+        <a href="{{ url_for('upload') }}" class="{{ 'active' if request.endpoint == 'upload' else '' }}">Upload logs</a>
+        <a href="{{ url_for('cleanup') }}" class="{{ 'active' if request.endpoint == 'cleanup' else '' }}">Cleanup</a>
+        <!-- Point Lab removed from nav (unlikely to be needed) - routes/templates
+             are still intact, just re-add this line to bring it back:
+             <a href="{{ url_for('point_lab') }}" class="{{ 'active' if request.endpoint == 'point_lab' else '' }}">Point Lab</a> -->
+        <a href="{{ url_for('algo_lab') }}" class="{{ 'active' if request.endpoint == 'algo_lab' else '' }}">Algorithm Lab</a>
+        <a href="{{ url_for('admin') }}" class="{{ 'active' if request.endpoint == 'admin' else '' }}">Admin</a>
+        <a href="{{ url_for('admin_devices') }}" class="{{ 'active' if request.endpoint in ('admin_devices',) else '' }}">Devices</a>
+        <a href="{{ url_for('tracker_page') }}" class="{{ 'active' if request.endpoint and request.endpoint.startswith('tracker_') else '' }}">Tracker</a>
+        <a href="/admin" style="color:#666;">&larr; Клиенты</a>
+    </nav>
+    <div class="header-stats">
+        <div>Networks: <span class="num" id="hsNetworks">-</span> <span id="hsGrowth" style="font-size:0.85em;"></span></div>
+        <svg id="headerChart" width="180" height="40"></svg>
+        <div style="font-size:0.85em;"><span style="color:#6ecb63;">&#9632;</span> added &nbsp;<span style="color:#e0743c;">&#9632;</span> removed</div>
+    </div>
+</header>
+<main>
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}
+        {% endif %}
+    {% endwith %}
+    {% if using_default_password %}
+        <div class="flash" style="background:#443311; border-color:#665522;">
+            &#9888; Using the default password ("changeme") - set <code>WIFIGPS_PASSWORD</code>
+            to something real before exposing this server to the internet.
+        </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+</main>
+<script>
+// Small header growth chart - fetched on every page since it's in base.html.
+// Counts ALL known networks/devices combined (WiFi + BLE) - GPS
+// points themselves aren't part of this count. Refreshed by the same
+// daily_stats snapshot that's now recorded after every upload, not just once
+// a day, so this stays current.
+fetch('/api/daily_stats?days=14').then(r => r.json()).then(days => {
+    const svg = document.getElementById('headerChart');
+    const w = 180, h = 40;
+    if (!days.length) return;
+
+    const today = days[days.length - 1];
+    const total = today.total_devices_count || 0;
+    const added = today.total_added || 0;
+    const removed = today.total_removed || 0;
+    const prevTotal = Math.max(1, total - added + removed);
+    const addedPct = (added / prevTotal) * 100;
+    const removedPct = (removed / prevTotal) * 100;
+
+    document.getElementById('hsNetworks').textContent = total;
+    let growthParts = [];
+    if (added) growthParts.push(`<span style="color:#6ecb63;">+${added} (+${addedPct.toFixed(1)}%)</span>`);
+    if (removed) growthParts.push(`<span style="color:#e0743c;">-${removed} (-${removedPct.toFixed(1)}%)</span>`);
+    document.getElementById('hsGrowth').innerHTML = growthParts.length ? growthParts.join(' ') + ' today' : '';
+
+    const maxVal = Math.max(1, ...days.map(d => Math.max(d.total_added || 0, d.total_removed || 0)));
+    const barW = w / days.length;
+    const scale = (h - 4) / (maxVal * 2); // added grows up, removed grows down from mid-line
+    const mid = h / 2;
+
+    let svgContent = `<line x1="0" y1="${mid}" x2="${w}" y2="${mid}" stroke="#333" stroke-width="1"/>`;
+    days.forEach((d, i) => {
+        const x = i * barW;
+        const addedH = (d.total_added || 0) * scale;
+        const removedH = (d.total_removed || 0) * scale;
+        svgContent += `<rect x="${x + 1}" y="${mid - addedH}" width="${barW - 2}" height="${addedH}" fill="#6ecb63"><title>${d.date}: +${d.total_added || 0}</title></rect>`;
+        svgContent += `<rect x="${x + 1}" y="${mid}" width="${barW - 2}" height="${removedH}" fill="#e0743c"><title>${d.date}: -${d.total_removed || 0}</title></rect>`;
+    });
+    svg.innerHTML = svgContent;
+}).catch(() => {});
+</script>
+</body>
+</html>

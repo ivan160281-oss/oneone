@@ -32,6 +32,8 @@ header.top .logo { font-size: 20px; }
 nav.tabs { display: flex; gap: 4px; flex: 1; flex-wrap: wrap; }
 nav.tabs button { background: transparent; color: var(--muted); padding: 7px 12px; }
 nav.tabs button.active { background: var(--bg); color: var(--text); font-weight: 600; }
+nav.tabs a.tab-link { color: var(--muted); padding: 7px 12px; text-decoration: none; border-radius: 6px; }
+nav.tabs a.tab-link:hover { color: var(--text); }
 .who { color: var(--muted); font-size: 13px; }
 
 main { padding: 16px; max-width: 1200px; margin: 0 auto; }
@@ -62,5 +64,5 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
   header.top { gap: 8px 12px; }
   header.top .who { margin-left: auto; }
   nav.tabs { order: 3; flex-basis: 100%; flex-wrap: nowrap; overflow-x: auto; }
-  nav.tabs button { white-space: nowrap; }
+  nav.tabs button, nav.tabs a.tab-link { white-space: nowrap; }
 }

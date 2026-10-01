@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Track detail - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">{{ session.filename }}</h2>
+    <p style="color:#999;">
+        Uploaded {{ session.uploaded_at }} &middot;
+        <span class="ok">{{ session.points_ok }} ok</span> &middot;
+        <span class="bad">{{ session.points_bad_gps }} bad_gps</span>
+    </p>
+</div>
+
+<div class="card" style="padding:0; overflow:hidden;">
+    <div id="map" style="height: 480px; width: 100%; background:#000;"></div>
+</div>
+
+<div class="card" style="color:#999; font-size:0.9em;">
+    <span style="color:#e24b4a;">&#9632;</span> real GPS track (red line, 'ok' points) &nbsp;&nbsp;
+    <span style="color:#f2a623;">&#9679;</span> GPS-independent estimated position for
+    'bad_gps' points (orange, only shown where at least one WiFi/BLE match exists,
+    RSSI-weighted when available) &nbsp;&nbsp;
+    <b>Note:</b> for 'ok' points, "estimate error" compares the estimate to the real
+    position - but the point's own data helped build that estimate's average, so this
+    number is optimistic (a best case, not a realistic accuracy figure). Estimates are
+    recomputed by the daily processing job - see <a href="{{ url_for('admin') }}">Admin</a>.
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Point-by-point telemetry</h3>
+    <div style="max-height: 600px; overflow-y: auto;">
+    <table id="pointsTable">
+        <thead>
+        <tr>
+            <th>#</th><th>Time</th><th>Status</th><th>Position</th><th>Speed</th>
+            <th>Heading</th><th>Steps</th>
+            <th>Estimate</th><th>WiFi seen</th><th>BLE seen</th>
+        </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='vendor/leaflet/js/leaflet.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/css/leaflet.css') }}" />
+<script>
+const sessionId = {{ session.id }};
+const map = L.map('map').setView([55.7558, 37.6173], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+function fmtWifi(list) {
+    if (!list.length) return '-';
+    return list.map(w => `${w.ssid || '(hidden)'} (${w.rssi}dBm)`).join(', ');
+}
+function fmtBle(list) {
+    if (!list.length) return '-';
+    return list.map(b => `${b.mac} (${b.rssi}dBm)`).join(', ');
+}
+
+fetch(`/api/track_detail/${sessionId}`).then(r => {
+    if (!r.ok) return r.json().then(err => { throw new Error(err.error || `HTTP ${r.status}`); });
+    return r.json();
+}).then(data => {
+    const points = data.points;
+
+    // Real track (red)
+    const realLatLngs = points.filter(p => p.status === 'ok' && p.lat && p.lon).map(p => [p.lat, p.lon]);
+    if (realLatLngs.length > 1) {
+        L.polyline(realLatLngs, { color: 'red', weight: 3 }).addTo(map);
+    }
+
+    // Estimated positions for bad_gps points (orange)
+    const estMarkers = [];
+    points.forEach(p => {
+        if (p.status === 'bad_gps' && p.est_lat != null && p.est_lon != null) {
+            const m = L.circleMarker([p.est_lat, p.est_lon], {
+                radius: 5, color: '#f2a623', fillColor: '#f2a623', fillOpacity: 0.8
+            }).bindPopup(`Estimated position<br>${p.ts || ''}<br>Matched: ${p.matched_wifi} WiFi, ${p.matched_ble || 0} BLE`);
+            m.addTo(map);
+            estMarkers.push([p.est_lat, p.est_lon]);
+        }
+    });
+
+    const allPts = realLatLngs.concat(estMarkers);
+    if (allPts.length > 0) {
+        map.fitBounds(L.latLngBounds(allPts), { maxZoom: 15 });
+    }
+
+    // Telemetry table
+    const tbody = document.querySelector('#pointsTable tbody');
+    points.forEach((p, i) => {
+        const tr = document.createElement('tr');
+        const posText = (p.status === 'ok')
+            ? `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`
+            : '-';
+        let estText = '-';
+        if (p.est_lat != null) {
+            estText = `${p.est_lat.toFixed(6)}, ${p.est_lon.toFixed(6)}`;
+            if (p.error_meters != null) estText += ` (err ${p.error_meters.toFixed(0)}m)`;
+        }
+        tr.innerHTML = `
+            <td>${i + 1}</td>
+            <td>${p.ts || '-'}</td>
+            <td class="${p.status === 'ok' ? 'ok' : 'bad'}">${p.status}</td>
+            <td>${posText}</td>
+            <td>${p.speed_kmh != null ? p.speed_kmh.toFixed(1) + ' km/h' : '-'}</td>
+            <td>${p.heading_deg != null ? p.heading_deg.toFixed(0) + '&deg;' : '-'}</td>
+            <td>${p.steps != null ? p.steps : '-'}</td>
+            <td>${estText}</td>
+            <td>${fmtWifi(p.wifi)}</td>
+            <td>${fmtBle(p.ble)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}).catch(err => {
+    document.getElementById('map').insertAdjacentHTML('afterend',
+        `<div class="card" style="background:#442222; border-color:#663333;">Could not load telemetry: ${err.message}</div>`);
+});
+</script>
+{% endblock %}

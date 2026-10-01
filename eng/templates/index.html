@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+{% block title %}Map - WiFi/GPS Tracker{% endblock %}
+{% block body_class %}full-bleed{% endblock %}
+{% block content %}
+
+<div id="controlsBar" style="padding:8px 16px; background:#1a1a1a; border-bottom:1px solid #333; display:flex; gap:18px; align-items:center; flex-wrap:wrap;">
+    <button id="toggleSessionsBtn" type="button">&#9656; Sessions</button>
+    <label><input type="checkbox" id="showTrack" checked> Show track</label>
+    <label><input type="checkbox" id="showWifiHeat" checked> Show WiFi density</label>
+    <label><input type="checkbox" id="showBleHeat" checked> Show BLE density</label>
+    <label><input type="checkbox" id="showStable" checked> Show stable networks</label>
+    <label><input type="checkbox" id="showJumps" checked> Show suspicious jumps</label>
+    <div>
+        <label>Session: </label>
+        <select id="sessionSelect">
+            <option value="">All sessions (cumulative)</option>
+        </select>
+    </div>
+</div>
+
+<div id="mapSplit" style="display:flex; height: calc(100vh - 106px);">
+    <div id="map" style="flex:1; min-width:0; background:#000;"></div>
+    <div id="sessionsPanel" style="display:none; width:45%; overflow-y:auto; background:#1a1a1a; border-left:1px solid #333; padding:16px; box-sizing:border-box;">
+        <h3 style="margin-top:0;">Uploaded sessions</h3>
+        <table id="sessionsTable">
+            <thead>
+            <tr><th>File</th><th>Uploaded</th><th>ok</th><th>bad_gps</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<div style="max-width:1100px; margin:0 auto; padding:20px; box-sizing:border-box;">
+    <div class="card">
+        <h3 style="margin-top:0;">WiFi-only locate (no GPS)</h3>
+        <p style="color:#999; font-size:0.9em;">
+            Paste the SSIDs currently visible on your device (comma-separated) to get a
+            rough position estimate based on previously uploaded data. Accuracy depends
+            entirely on how much matching data has been collected, and on how unique
+            those SSIDs are (see note below).
+        </p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <input type="text" id="locateSsids" placeholder="MyRouter, Neighbour_WiFi, ..." style="flex:1; min-width:280px;">
+            <input type="text" id="locateBle" placeholder="BLE MAC addresses, comma-separated (optional)" style="flex:1; min-width:280px;">
+            <button onclick="locateByWifi()">Locate</button>
+        </div>
+        <div id="locateResult" style="margin-top:10px; color:#ccc;"></div>
+    </div>
+
+    <div class="card" style="color:#999; font-size:0.9em;">
+        <b>Note on accuracy:</b> WiFi networks are matched by BSSID (the unique MAC address
+        of each access point) whenever it's available, which is much more precise than
+        matching by name alone. There's no existing public database
+        mapping any of these identifiers to real-world coordinates, so all positioning
+        here comes purely from your own accumulated uploads. Check out
+        <a href="{{ url_for('algo_lab') }}">Algorithm Lab</a> for a higher-confidence,
+        "stable points only" version of this database.
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='vendor/leaflet/js/leaflet.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/css/leaflet.css') }}" />
+<script src="{{ url_for('static', filename='vendor/leaflet/js/leaflet-heat.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/leaflet/js/leaflet.markercluster.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/css/MarkerCluster.css') }}" />
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/css/MarkerCluster.Default.css') }}" />
+<script>
+const map = L.map('map').setView([55.7558, 37.6173], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+let trackLayer = null;
+let recentTrackLayer = null;
+let showroomLayer = null;
+let wifiHeatLayer = null;
+let bleHeatLayer = null;
+let stableLayer = null;
+let jumpsLayer = null;
+let showroomMode = false;
+
+// On-map floating toggle for Showroom mode - deliberately NOT in the top
+// controls bar, since this switches what the track itself represents
+// (real GPS vs a WiFi/BLE-only reconstruction), not just a layer on/off.
+const showroomControl = L.control({ position: 'topright' });
+showroomControl.onAdd = function () {
+    const div = L.DomUtil.create('div', 'showroom-toggle');
+    div.style.cssText = 'background:#1a1a1a; border:1px solid #444; border-radius:8px; padding:8px 12px; cursor:pointer; font-family:sans-serif; font-size:13px; color:#eee; user-select:none; box-shadow:0 2px 6px rgba(0,0,0,0.4);';
+    div.innerHTML = '<label style="cursor:pointer; display:flex; align-items:center; gap:6px;">' +
+        '<input type="checkbox" id="showroomToggle" style="cursor:pointer;"> ' +
+        '<span>Showroom (только стабильные WiFi/BLE, последние 20 треков)</span></label>';
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+};
+showroomControl.addTo(map);
+
+function drawSessionPolylines(points, layerGroup, style) {
+    let runStart = 0;
+    const valid = points.filter(p => p.lat && p.lon);
+    for (let i = 1; i <= valid.length; i++) {
+        const brokeRun = (i === valid.length) || (valid[i].session_id !== valid[runStart].session_id);
+        if (brokeRun) {
+            const latlngs = valid.slice(runStart, i).map(p => [p.lat, p.lon]);
+            if (latlngs.length > 1) {
+                L.polyline(latlngs, style).addTo(layerGroup);
+            }
+            runStart = i;
+        }
+    }
+    return valid;
+}
+
+// --- collapsible sessions panel (splits the screen in two when open) ---
+const toggleBtn = document.getElementById('toggleSessionsBtn');
+const sessionsPanel = document.getElementById('sessionsPanel');
+toggleBtn.addEventListener('click', () => {
+    const opening = sessionsPanel.style.display === 'none';
+    sessionsPanel.style.display = opening ? 'block' : 'none';
+    toggleBtn.innerHTML = opening ? '&#9662; Sessions' : '&#9656; Sessions';
+    setTimeout(() => map.invalidateSize(), 50); // Leaflet needs a nudge after resize
+});
+
+function loadJumps(sessionId) {
+    if (jumpsLayer) map.removeLayer(jumpsLayer);
+    if (!document.getElementById('showJumps').checked) return;
+    const params = new URLSearchParams();
+    if (sessionId) params.set('session_id', sessionId);
+    fetch(`/api/suspicious_jumps?${params.toString()}`).then(r => r.json()).then(jumps => {
+        jumpsLayer = L.layerGroup();
+        jumps.forEach(j => {
+            L.polyline(
+                [[j.from_lat, j.from_lon], [j.to_lat, j.to_lon]],
+                { color: '#ffe066', weight: 3, dashArray: '6 6' }
+            ).bindPopup(
+                `Implied speed: ${j.speed_kmh.toFixed(0)} km/h over ${j.dt_seconds.toFixed(0)}s`
+                + `<br>Heuristic hint - not proof. Fix it on the <a href="{{ request.script_root }}/cleanup">Cleanup</a> page.`
+            ).addTo(jumpsLayer);
+        });
+        jumpsLayer.addTo(map);
+    });
+}
+document.getElementById('showJumps').addEventListener('change', () => loadJumps(document.getElementById('sessionSelect').value || null));
+
+// Two-layer real-GPS track: one thin, fully-opaque, uniformly-colored line
+// per session covering ALL history (so repeated routes never visually
+// "stack" into a darker blob - same color drawn twice over the same pixels
+// just looks like it was drawn once), plus a separate, thicker, brighter red
+// layer for only the most recently uploaded sessions. A session ages out of
+// the "recent" layer automatically the moment a newer one pushes it past the
+// limit (see /api/track/recent) - it doesn't need to be redrawn or migrated,
+// since the thin historical layer already covers it and simply keeps
+// showing through once the thick red highlight is gone.
+function loadTrack(sessionId) {
+    if (sessionId) {
+        // A specific session's real, un-snapped detail - smoothing a
+        // single session's own line isn't the point.
+        loadSessionTrack(sessionId);
+        return;
+    }
+    // "All sessions" uses the deduplicated road-graph endpoint (see
+    // api_track_historical): a list of [[lat,lon],[lat,lon]] edges, each
+    // physical stretch of road appearing exactly once no matter how many
+    // sessions traversed it - not points-with-session_id like /api/track,
+    // so it needs its own straightforward rendering (draw every edge once).
+    fetch('/api/track/historical').then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+    }).then(edges => {
+        if (trackLayer) map.removeLayer(trackLayer);
+        trackLayer = L.layerGroup();
+        const allLatLngs = [];
+        edges.forEach(([a, b]) => {
+            L.polyline([a, b], { color: '#e8a33d', weight: 1.5, opacity: 1 }).addTo(trackLayer);
+            allLatLngs.push(a, b);
+        });
+
+        if (document.getElementById('showTrack').checked && !showroomMode) {
+            trackLayer.addTo(map);
+        }
+        if (allLatLngs.length > 0) {
+            map.fitBounds(L.latLngBounds(allLatLngs), { maxZoom: 15 });
+        }
+    }).catch(err => console.error('loadTrack (historical) failed:', err));
+}
+
+function loadSessionTrack(sessionId) {
+    fetch(`/api/track?session_id=${sessionId}`).then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+    }).then(points => {
+        if (trackLayer) map.removeLayer(trackLayer);
+        trackLayer = L.layerGroup();
+        const valid = drawSessionPolylines(points, trackLayer, { color: '#e8a33d', weight: 1.5, opacity: 1 });
+
+        if (document.getElementById('showTrack').checked && !showroomMode) {
+            trackLayer.addTo(map);
+        }
+        if (valid.length > 0) {
+            const bounds = L.latLngBounds(valid.map(p => [p.lat, p.lon]));
+            map.fitBounds(bounds, { maxZoom: 15 });
+        }
+    }).catch(err => console.error('loadTrack (session) failed:', err));
+}
+
+function loadRecentTrack() {
+    fetch('/api/track/recent?limit=20').then(r => r.json()).then(points => {
+        if (recentTrackLayer) map.removeLayer(recentTrackLayer);
+        recentTrackLayer = L.layerGroup();
+        drawSessionPolylines(points, recentTrackLayer, { color: '#ff3b3b', weight: 4, opacity: 1 });
+        if (document.getElementById('showTrack').checked && !showroomMode) {
+            recentTrackLayer.addTo(map);
+        }
+    }).catch(err => console.error('loadRecentTrack failed:', err));
+}
+
+function loadShowroom() {
+    fetch('/api/track/showroom?limit=20').then(r => r.json()).then(points => {
+        if (showroomLayer) map.removeLayer(showroomLayer);
+        showroomLayer = L.layerGroup();
+        drawSessionPolylines(points, showroomLayer, { color: '#a78bfa', weight: 4, opacity: 0.95 });
+        if (showroomMode) showroomLayer.addTo(map);
+    }).catch(err => console.error('loadShowroom failed:', err));
+}
+
+document.getElementById('showTrack').addEventListener('change', (e) => {
+    if (showroomMode) return; // showroom has its own on/off, see below
+    if (!trackLayer || !recentTrackLayer) return;
+    if (e.target.checked) { trackLayer.addTo(map); recentTrackLayer.addTo(map); }
+    else { map.removeLayer(trackLayer); map.removeLayer(recentTrackLayer); }
+});
+
+document.getElementById('showroomToggle').addEventListener('change', (e) => {
+    showroomMode = e.target.checked;
+    if (showroomMode) {
+        if (trackLayer) map.removeLayer(trackLayer);
+        if (recentTrackLayer) map.removeLayer(recentTrackLayer);
+        if (showroomLayer) showroomLayer.addTo(map);
+        if (!showroomLayer) loadShowroom();
+    } else {
+        if (showroomLayer) map.removeLayer(showroomLayer);
+        if (document.getElementById('showTrack').checked) {
+            if (trackLayer) trackLayer.addTo(map);
+            if (recentTrackLayer) recentTrackLayer.addTo(map);
+        }
+    }
+});
+
+function weightFromCount(count) {
+    // Caps how much a single very-frequently-seen network can dominate the
+    // heatmap - without this, one network seen 500 times would swamp
+    // everything else on the same gradient.
+    return Math.min(count, 15) / 15;
+}
+
+function loadWifiHeat() {
+    fetch('/api/networks').then(r => r.json()).then(networks => {
+        if (wifiHeatLayer) map.removeLayer(wifiHeatLayer);
+        const points = networks
+            .filter(n => n.avg_lat != null && n.avg_lon != null)
+            .map(n => [n.avg_lat, n.avg_lon, weightFromCount(n.observation_count)]);
+        wifiHeatLayer = L.heatLayer(points, {
+            radius: 20, blur: 16, maxZoom: 17, minOpacity: 0.15,
+            gradient: { 0.0: 'rgba(77,166,255,0)', 0.4: 'rgba(77,166,255,0.5)', 1.0: '#4da6ff' },
+        });
+        if (document.getElementById('showWifiHeat').checked) {
+            wifiHeatLayer.addTo(map);
+        }
+    });
+}
+
+function loadBleHeat() {
+    fetch('/api/ble_devices').then(r => r.json()).then(devices => {
+        if (bleHeatLayer) map.removeLayer(bleHeatLayer);
+        const points = devices
+            .filter(d => d.avg_lat != null && d.avg_lon != null)
+            .map(d => [d.avg_lat, d.avg_lon, weightFromCount(d.observation_count)]);
+        bleHeatLayer = L.heatLayer(points, {
+            radius: 20, blur: 16, maxZoom: 17, minOpacity: 0.15,
+            gradient: { 0.0: 'rgba(61,220,151,0)', 0.4: 'rgba(61,220,151,0.5)', 1.0: '#3ddc97' },
+        });
+        if (document.getElementById('showBleHeat').checked) {
+            bleHeatLayer.addTo(map);
+        }
+    });
+}
+
+function loadStable() {
+    Promise.all([
+        fetch('/api/stable_networks').then(r => r.json()),
+        fetch('/api/stable_ble_devices').then(r => r.json()),
+    ]).then(([wifiStable, bleStable]) => {
+        if (stableLayer) map.removeLayer(stableLayer);
+        stableLayer = L.layerGroup();
+
+        wifiStable.forEach(n => {
+            if (n.avg_lat == null || n.avg_lon == null) return;
+            L.circleMarker([n.avg_lat, n.avg_lon], {
+                radius: 7, weight: 2, color: '#f2d43d', fillColor: '#f2d43d', fillOpacity: 0.9
+            }).bindPopup(
+                `<b>${n.ssid || '(hidden)'}</b> (WiFi, stable)<br>BSSID: ${n.bssid || 'unknown'}`
+                + `<br>Confirmed in ${n.distinct_sessions} sessions<br>Spread: ${n.spread_meters.toFixed(0)} m`
+                + `<br>Stability score: ${n.stability_score.toFixed(2)}<br>Observations: ${n.observation_count}`
+            ).addTo(stableLayer);
+        });
+        bleStable.forEach(d => {
+            if (d.avg_lat == null || d.avg_lon == null) return;
+            L.circleMarker([d.avg_lat, d.avg_lon], {
+                radius: 7, weight: 2, color: '#f2d43d', fillColor: '#f2d43d', fillOpacity: 0.9
+            }).bindPopup(
+                `<b>BLE ${d.mac}</b> (stable)<br>Confirmed in ${d.distinct_sessions} sessions`
+                + `<br>Spread: ${d.spread_meters.toFixed(0)} m<br>Stability score: ${d.stability_score.toFixed(2)}`
+                + `<br>Observations: ${d.observation_count}`
+            ).addTo(stableLayer);
+        });
+
+        if (document.getElementById('showStable').checked) {
+            stableLayer.addTo(map);
+        }
+    });
+}
+
+document.getElementById('showWifiHeat').addEventListener('change', (e) => {
+    if (!wifiHeatLayer) return;
+    if (e.target.checked) wifiHeatLayer.addTo(map);
+    else map.removeLayer(wifiHeatLayer);
+});
+
+document.getElementById('showBleHeat').addEventListener('change', (e) => {
+    if (!bleHeatLayer) return;
+    if (e.target.checked) bleHeatLayer.addTo(map);
+    else map.removeLayer(bleHeatLayer);
+});
+
+document.getElementById('showStable').addEventListener('change', (e) => {
+    if (!stableLayer) return;
+    if (e.target.checked) stableLayer.addTo(map);
+    else map.removeLayer(stableLayer);
+});
+
+document.getElementById('sessionSelect').addEventListener('change', (e) => {
+    loadTrack(e.target.value || null);
+    loadJumps(e.target.value || null);
+});
+
+fetch('/api/sessions').then(r => r.json()).then(sessions => {
+    const sel = document.getElementById('sessionSelect');
+    sessions.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = `${s.filename} (${s.points_ok} ok / ${s.points_bad_gps} bad_gps)`;
+        sel.appendChild(opt);
+    });
+
+    const tbody = document.querySelector('#sessionsTable tbody');
+    sessions.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${s.filename}</td><td>${s.uploaded_at}</td>`
+            + `<td class="ok">${s.points_ok}</td><td class="bad">${s.points_bad_gps}</td>`
+            + `<td><a href="{{ request.script_root }}/track/${s.id}">View telemetry</a></td>`;
+        tbody.appendChild(tr);
+    });
+});
+
+let locateMarker = null;
+function locateByWifi() {
+    const ssids = document.getElementById('locateSsids').value;
+    const bleMacs = document.getElementById('locateBle').value;
+    if (!ssids.trim() && !bleMacs.trim()) return;
+    const params = new URLSearchParams();
+    if (ssids.trim()) params.set('ssids', ssids);
+    if (bleMacs.trim()) params.set('ble_macs', bleMacs);
+    fetch(`/api/locate?${params.toString()}`).then(r => r.json()).then(res => {
+        const box = document.getElementById('locateResult');
+        if (!res.estimate) {
+            box.textContent = res.message || 'No match found.';
+            return;
+        }
+        box.innerHTML = `Matched ${res.matched}/${res.requested} networks. Estimated position: `
+            + `${res.estimate.lat.toFixed(6)}, ${res.estimate.lon.toFixed(6)}`;
+        if (locateMarker) map.removeLayer(locateMarker);
+        locateMarker = L.marker([res.estimate.lat, res.estimate.lon])
+            .addTo(map)
+            .bindPopup('WiFi-only estimated position')
+            .openPopup();
+        map.setView([res.estimate.lat, res.estimate.lon], 14);
+    });
+}
+
+loadTrack(null);
+loadRecentTrack();
+loadWifiHeat();
+loadBleHeat();
+loadStable();
+loadJumps(null);
+</script>
+{% endblock %}

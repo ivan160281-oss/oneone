@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Upload result - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">Upload result</h2>
+    <table>
+        <thead>
+        <tr><th>File</th><th>Total lines</th><th>ok</th><th>bad_gps</th></tr>
+        </thead>
+        <tbody>
+        {% for r in results %}
+            <tr>
+                <td>{{ r.filename }}</td>
+                {% if r.error %}
+                    <td colspan="3" class="bad">{{ r.error }}</td>
+                {% else %}
+                    <td>{{ r.points_total }}</td>
+                    <td class="ok">{{ r.points_ok }}</td>
+                    <td class="bad">{{ r.points_bad_gps }}</td>
+                {% endif %}
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% if summary %}
+        <div style="color:#999; font-size:0.9em; margin-top:12px;">
+            <p style="margin:4px 0;">Automatic cleanup after this upload:</p>
+            <ul style="margin:4px 0;">
+                {% if summary.timestamps_fixed %}
+                    <li>{{ summary.timestamps_fixed }} point(s) had an implausible GPS timestamp (cold-start artifact) - flagged <code>bad_gps</code></li>
+                {% endif %}
+                {% if summary.speed_outliers_fixed %}
+                    <li>{{ summary.speed_outliers_fixed }} point(s) were part of a speed-outlier excursion (jamming/spoofing) - flagged <code>bad_gps</code></li>
+                {% endif %}
+                {% if summary.bad_gps_purged %}
+                    <li>{{ summary.bad_gps_purged }} <code>bad_gps</code> point(s) permanently deleted (see <a href="{{ url_for('reports') }}">Reports</a> for the log)</li>
+                {% endif %}
+                {% if summary.cotravel_wifi_excluded or summary.cotravel_ble_excluded %}
+                    <li>{{ summary.cotravel_wifi_excluded }} WiFi network(s) and {{ summary.cotravel_ble_excluded }} BLE device(s) currently excluded as co-traveling (ride-along) devices</li>
+                {% endif %}
+                {% if summary.ble_far_from_track_excluded %}
+                    <li>{{ summary.ble_far_from_track_excluded }} BLE device(s) excluded - their averaged position wasn't near the actual GPS track</li>
+                {% endif %}
+                {% if summary.wifi_far_from_track_excluded %}
+                    <li>{{ summary.wifi_far_from_track_excluded }} WiFi network(s) excluded - their averaged position wasn't near the actual GPS track</li>
+                {% endif %}
+                {% if not summary.timestamps_fixed and not summary.speed_outliers_fixed and not summary.bad_gps_purged and not summary.cotravel_wifi_excluded and not summary.cotravel_ble_excluded and not summary.ble_far_from_track_excluded and not summary.wifi_far_from_track_excluded %}
+                    <li>Nothing needed cleaning up.</li>
+                {% endif %}
+            </ul>
+            <p style="margin:4px 0;">See <a href="{{ url_for('reports') }}">Reports</a> for the full removal log.</p>
+        </div>
+    {% endif %}
+    <p style="margin-top:16px;">
+        <a href="{{ url_for('map_view') }}"><button type="button">View on map</button></a>
+        <a href="{{ url_for('upload') }}" style="margin-left:12px;">Upload more files</a>
+    </p>
+</div>
+
+{% endblock %}

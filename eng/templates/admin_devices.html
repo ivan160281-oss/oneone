@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Devices - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">Devices</h2>
+    <p style="color:#999; font-size:0.9em;">
+        Every registered tracker - auto-created the first time it uploads/syncs
+        (by chip id or IMEI), or pre-created when a user claims one by ID on their
+        own dashboard before it's ever connected. Assign an owner and device type
+        here, or leave owner blank to unclaim it.
+    </p>
+    <div style="max-height:600px; overflow-y:auto;">
+    <table>
+        <thead>
+        <tr>
+            <th>ID</th><th>Chip ID</th><th>IMEI</th><th>Name</th><th>Type</th>
+            <th>Owner</th><th>First seen</th><th>Last seen</th><th></th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for d in devices %}
+            <tr>
+                <form method="post" action="{{ url_for('admin_devices_update', device_id=d.id) }}">
+                <td>{{ d.id }}</td>
+                <td style="font-family:monospace; font-size:0.85em;">{{ d.chip_id or '-' }}</td>
+                <td style="font-family:monospace; font-size:0.85em;">{{ d.imei or '-' }}</td>
+                <td><input type="text" name="display_name" value="{{ d.display_name or '' }}" placeholder="unnamed" style="width:120px;"></td>
+                <td>
+                    <select name="device_type_id">
+                        <option value="">-</option>
+                        {% for dt in device_types %}
+                            <option value="{{ dt.id }}" {{ 'selected' if d.device_type_id == dt.id else '' }}>{{ dt.name }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td>
+                    <select name="owner_user_id">
+                        <option value="">(unclaimed)</option>
+                        {% for u in users %}
+                            <option value="{{ u.id }}" {{ 'selected' if d.owner_user_id == u.id else '' }}>{{ u.display_name or u.username }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td style="font-size:0.85em; color:#999;">{{ d.first_seen }}</td>
+                <td style="font-size:0.85em; color:#999;">{{ d.last_seen or 'never' }}</td>
+                <td><button type="submit">Save</button></td>
+                </form>
+            </tr>
+        {% else %}
+            <tr><td colspan="9" style="color:#999;">No devices registered yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endblock %}

@@ -11,6 +11,7 @@ from typing import List, Optional
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from . import auth, db, ingest, track
@@ -48,6 +49,17 @@ async def lifespan(_app):
 
 app = FastAPI(title="ALTGEO", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+if os.environ.get("ALTGEO_ENG", "1") != "0":
+    # Engineering part (admin only, see eng/web.py require_admin).
+    from a2wsgi import WSGIMiddleware
+
+    from eng import feed as eng_feed
+    from eng.web import app as eng_app
+
+    app.mount("/eng", WSGIMiddleware(eng_app))
+else:
+    eng_feed = None
 
 
 # ---------------------------------------------------------------------------
@@ -405,13 +417,16 @@ def sync_check(body: SyncCheckIn, source=Depends(sd_source), conn=Depends(db.get
 
 
 @app.post("/api/upload")
-async def upload(logfiles: List[UploadFile] = File(...), source=Depends(sd_source), conn=Depends(db.get_conn)):
-    stored = []
+async def upload(request: Request, logfiles: List[UploadFile] = File(...), source=Depends(sd_source),
+                 conn=Depends(db.get_conn)):
+    stored, raw_files = [], []
     for f in logfiles:
         name = os.path.basename(f.filename or "")
         if not ingest.valid_log_filename(name):
             raise HTTPException(400, f"unexpected file name: {name}")
-        text = (await f.read()).decode("utf-8", errors="replace")
+        data = await f.read()
+        raw_files.append((name, data))
+        text = data.decode("utf-8", errors="replace")
         points = ingest.parse_log_file(name, text)
         conn.execute("DELETE FROM raw_points WHERE source_key = ? AND file = ?", (source, name))
         ingest.store_points(conn, source, points, file=name)
@@ -421,6 +436,8 @@ async def upload(logfiles: List[UploadFile] = File(...), source=Depends(sd_sourc
         )
         stored.append({"file": name, "points": len(points)})
     conn.commit()
+    if eng_feed and raw_files:
+        await run_in_threadpool(eng_feed.log_files, raw_files, request.headers.get("x-device-chip-id"))
     return {"stored": stored}
 
 
@@ -453,6 +470,8 @@ async def device_points(request: Request, conn=Depends(db.get_conn)):
         points.append(rp)
     acked = ingest.store_points(conn, f"imei:{imei}", points)
     conn.commit()
+    if eng_feed:
+        await run_in_threadpool(eng_feed.realtime_points, imei, [p for p in raw_points if isinstance(p, dict)])
     return {"acked_seqs": acked + unusable}
 
 

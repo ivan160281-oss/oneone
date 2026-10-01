@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Algorithm Lab - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">Algorithm Lab: stable point detection</h2>
+    <p style="color:#999;">
+        The regular network database averages every sighting of a network together,
+        whether it's been seen once or twenty times. This algorithm instead looks for
+        WiFi networks / BLE devices that reappear at essentially the
+        same place across <b>multiple different uploaded sessions</b> - the more
+        independent re-confirmations, and the tighter the cluster of positions, the
+        higher its <b>stability score</b>. This builds a separate, prioritized "stable
+        points" database you can use instead of the regular one on the
+        <a href="{{ url_for('point_lab') }}">Point Lab</a> page. Runs only when you
+        trigger it - not part of the daily automatic job.
+    </p>
+    <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <label>Minimum distinct sessions: <input type="number" id="minSessions" value="2" min="2" style="width:60px;"></label>
+        <button id="runBtn" type="button">Run algorithm now</button>
+    </div>
+    <div id="runResult" style="margin-top:10px; color:#ccc;"></div>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Stable WiFi networks ({{ stable_networks|length }})</h3>
+    <div style="max-height:400px; overflow-y:auto;">
+    <table>
+        <thead>
+        <tr><th>SSID</th><th>BSSID</th><th>Sessions</th><th>Spread</th><th>Score</th><th>Observations</th></tr>
+        </thead>
+        <tbody id="stableNetworksBody">
+        {% for n in stable_networks %}
+            <tr>
+                <td>{{ n.ssid or '(hidden)' }}</td>
+                <td>{{ n.bssid or '-' }}</td>
+                <td>{{ n.distinct_sessions }}</td>
+                <td>{{ '%.0f'|format(n.spread_meters) }} m</td>
+                <td>{{ '%.2f'|format(n.stability_score) }}</td>
+                <td>{{ n.observation_count }}</td>
+            </tr>
+        {% else %}
+            <tr><td colspan="6" style="color:#999;">Run the algorithm to populate this.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Stable BLE devices ({{ stable_ble|length }})</h3>
+    <p style="color:#999; font-size:0.9em;">
+        Only genuinely fixed BLE devices show up here in practice - most phones/wearables
+        rotate their address for privacy every ~15 min, so they never accumulate enough
+        repeat sightings under one key to qualify.
+    </p>
+    <div style="max-height:400px; overflow-y:auto;">
+    <table>
+        <thead>
+        <tr><th>MAC</th><th>Sessions</th><th>Spread</th><th>Score</th><th>Observations</th></tr>
+        </thead>
+        <tbody id="stableBleBody">
+        {% for n in stable_ble %}
+            <tr>
+                <td>{{ n.mac }}</td>
+                <td>{{ n.distinct_sessions }}</td>
+                <td>{{ '%.0f'|format(n.spread_meters) }} m</td>
+                <td>{{ '%.2f'|format(n.stability_score) }}</td>
+                <td>{{ n.observation_count }}</td>
+            </tr>
+        {% else %}
+            <tr><td colspan="5" style="color:#999;">Run the algorithm to populate this.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<script>
+document.getElementById('runBtn').addEventListener('click', () => {
+    const minSessions = parseInt(document.getElementById('minSessions').value) || 2;
+    document.getElementById('runResult').textContent = 'Running...';
+    fetch('/api/algolab/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ min_sessions: minSessions })
+    }).then(r => r.json()).then(data => {
+        document.getElementById('runResult').textContent =
+            `Done - ${data.stable_networks_count} stable WiFi networks, ${data.stable_ble_count} stable BLE devices found.`;
+        setTimeout(() => location.reload(), 1200);
+    });
+});
+</script>
+{% endblock %}

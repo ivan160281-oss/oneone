@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Requests - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">Contact requests</h2>
+    <p style="color:#999; font-size:0.9em;">
+        Submitted through the public landing page's contact form. Firmware
+        management moved to the <a href="{{ url_for('tracker_page') }}">Tracker</a> page.
+    </p>
+    <div style="max-height:600px; overflow-y:auto;">
+    <table>
+        <thead>
+        <tr><th>Submitted</th><th>Type</th><th>Name</th><th>Company</th><th>Email</th><th>Phone</th><th>Message</th></tr>
+        </thead>
+        <tbody>
+        {% for r in contact_requests %}
+            <tr>
+                <td>{{ r.submitted_at }}</td>
+                <td>{{ 'Partner' if r.kind == 'partner' else 'Customer' }}</td>
+                <td>{{ r.name }}</td>
+                <td>{{ r.company }}</td>
+                <td>{{ r.email }}</td>
+                <td>{{ r.phone }}</td>
+                <td>{{ r.message }}</td>
+            </tr>
+        {% else %}
+            <tr><td colspan="7" style="color:#999;">No requests yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endblock %}

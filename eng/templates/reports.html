@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% block title %}Reports - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">Reports</h2>
+    <p style="color:#999;">
+        Everything on this page is automatic: implausible-timestamp points, speed-outlier
+        excursions (jamming/spoofing), and co-traveling WiFi/BLE devices (car hotspot,
+        earbuds, in-car multimedia) are all cleaned up after every upload and once daily
+        (see <a href="{{ url_for('admin') }}">Admin</a> for the schedule and the
+        speed threshold setting). This page shows what got removed and why, and lets
+        you compare how much it actually helps.
+    </p>
+    <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <button id="detectBtn" type="button">Run co-traveling detection now</button>
+        <span id="detectResult" style="color:#999;"></span>
+    </div>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Removal summary</h3>
+    <div id="summaryStats" style="display:flex; gap:24px; flex-wrap:wrap;"></div>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Removal log</h3>
+    <div style="max-height:320px; overflow-y:auto;">
+    <table>
+        <thead><tr><th>When</th><th>Type</th><th>Detail</th><th>Count / info</th><th></th></tr></thead>
+        <tbody id="removalLogBody"><tr><td colspan="5" style="color:#999;">Loading...</td></tr></tbody>
+    </table>
+    </div>
+</div>
+
+<div class="card" style="padding:0; overflow:hidden;">
+    <div id="removalMap" style="height: 420px; width: 100%; background:#000;"></div>
+</div>
+<div class="card" style="color:#999; font-size:0.9em;">
+    <span style="color:#e0743c;">&#9679;</span> speed outlier &nbsp;
+    <span style="color:#f2d43d;">&#9679;</span> implausible timestamp &nbsp;
+    <span style="color:#7d97a8;">&#9679;</span> manual cleanup
+</div>
+
+<div class="card">
+    <h2 style="margin-top:0;">Algorithm effectiveness: old vs new</h2>
+    <p style="color:#999;">
+        Compares the regular WiFi/BLE position estimate against a version that excludes
+        detected co-traveling devices, for one session at a time.
+    </p>
+    <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <label>Session (needs real GPS to compare against): </label>
+        <select id="sessionSelect" style="min-width:280px;">
+            <option value="">Choose a session...</option>
+        </select>
+    </div>
+</div>
+
+<div class="card" id="chartCard" style="display:none;">
+    <h3 style="margin-top:0;">Average position error (lower is better)</h3>
+    <p style="color:#999; font-size:0.9em;">Only counted where a real GPS fix AND that estimate both exist for the same point.</p>
+    <div id="errorChart"></div>
+</div>
+
+<div class="card" id="mapControlsCard" style="display:none;">
+    <label style="margin-right:14px;"><input type="checkbox" id="showGps" checked> <span style="color:#e24b4a;">&#9632;</span> GPS (ground truth)</label>
+    <label style="margin-right:14px;"><input type="checkbox" id="showWifiNew" checked> <span style="color:#4da6ff;">&#9632;</span> WiFi (new)</label>
+    <label style="margin-right:14px;"><input type="checkbox" id="showWifiOld"> <span style="color:#7d97a8;">&#9632;</span> WiFi (old)</label>
+    <label style="margin-right:14px;"><input type="checkbox" id="showBleNew" checked> <span style="color:#3ddc97;">&#9632;</span> BLE (new)</label>
+    <label style="margin-right:14px;"><input type="checkbox" id="showBleOld"> <span style="color:#6b8f7f;">&#9632;</span> BLE (old)</label>
+</div>
+
+<div class="card" style="padding:0; overflow:hidden;">
+    <div id="map" style="height: 520px; width: 100%; background:#000;"></div>
+</div>
+
+<script src="{{ url_for('static', filename='vendor/leaflet/js/leaflet.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/css/leaflet.css') }}" />
+<script>
+const REASON_COLORS = { speed_outlier: '#e0743c', implausible_timestamp: '#f2d43d', manual_cleanup: '#7d97a8' };
+const REASON_LABELS = {
+    speed_outlier: 'Speed outlier', implausible_timestamp: 'Implausible timestamp',
+    manual_cleanup: 'Manual cleanup', unknown_or_original: 'Other/original bad_gps'
+};
+
+// --- Removal summary ---
+function loadSummary() {
+    fetch('/api/reports/removal_summary').then(r => r.json()).then(s => {
+        const el = document.getElementById('summaryStats');
+        let html = '';
+        Object.entries(s.points_by_reason).forEach(([reason, count]) => {
+            html += `<div><b style="color:${REASON_COLORS[reason] || '#ccc'};">${count}</b><br>
+                <span style="color:#999; font-size:0.85em;">${REASON_LABELS[reason] || reason}</span></div>`;
+        });
+        const detail = s.devices_excluded_detail || {};
+        const deviceLabels = {
+            wifi_co_traveling: 'WiFi excluded (co-travel)',
+            ble_co_traveling: 'BLE excluded (co-travel)',
+            wifi_far_from_track: 'WiFi excluded (far from track)',
+            ble_far_from_track: 'BLE excluded (far from track)',
+        };
+        Object.entries(deviceLabels).forEach(([k, label]) => {
+            html += `<div><b>${detail[k] || 0}</b><br><span style="color:#999; font-size:0.85em;">${label}</span></div>`;
+        });
+        el.innerHTML = html;
+    });
+}
+
+// --- Removal log ---
+function loadRemovalLog() {
+    fetch('/api/reports/removal_log').then(r => r.json()).then(data => {
+        const tbody = document.getElementById('removalLogBody');
+        const rows = [];
+        data.point_events.forEach(e => {
+            rows.push({
+                when: e.at_minute, type: 'points',
+                detail: `${e.filename} (session ${e.session_id})`,
+                info: `${e.point_count} point(s) - ${REASON_LABELS[e.reason] || e.reason}`,
+                action: ''
+            });
+        });
+        data.device_events.forEach(e => {
+            const info = e.reason === 'far_from_track'
+                ? `not near GPS track, ${e.observation_count} obs`
+                : `presence ${(e.max_presence_ratio*100).toFixed(0)}%, ${e.flagged_sessions} session(s), ${e.observation_count} obs`;
+            rows.push({
+                when: e.detected_at, type: `${e.kind} (${e.reason === 'far_from_track' ? 'far from track' : 'co-travel'})`,
+                detail: e.label,
+                info: info,
+                action: `<button data-key="${e.key}" class="restoreBtn">Restore</button>`
+            });
+        });
+        rows.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="5" style="color:#999;">Nothing removed yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = rows.map(r => `
+            <tr><td>${r.when || '-'}</td><td>${r.type}</td><td>${r.detail}</td><td>${r.info}</td><td>${r.action}</td></tr>
+        `).join('');
+        tbody.querySelectorAll('.restoreBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                fetch('/api/reports/restore_device', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: btn.dataset.key })
+                }).then(r => r.json()).then(() => { loadRemovalLog(); loadSummary(); });
+            });
+        });
+    });
+}
+</script>
+<script>
+const removalMap = L.map('removalMap').setView([55.7558, 37.6173], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(removalMap);
+
+function loadRemovalPoints() {
+    fetch('/api/reports/removal_points').then(r => r.json()).then(points => {
+        points.forEach(p => {
+            L.circleMarker([p.lat, p.lon], {
+                radius: 4, color: REASON_COLORS[p.reason] || '#ccc',
+                fillColor: REASON_COLORS[p.reason] || '#ccc', fillOpacity: 0.7
+            }).bindPopup(`${REASON_LABELS[p.reason] || p.reason}<br>${p.ts || ''}<br>Removed: ${p.at || ''}`).addTo(removalMap);
+        });
+        if (points.length) {
+            removalMap.fitBounds(L.latLngBounds(points.map(p => [p.lat, p.lon])), { maxZoom: 14 });
+        }
+    });
+}
+
+document.getElementById('detectBtn').addEventListener('click', () => {
+    document.getElementById('detectResult').textContent = 'Detecting...';
+    fetch('/api/reports/detect', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    }).then(r => r.json()).then(data => {
+        document.getElementById('detectResult').textContent =
+            `${data.wifi_candidates} WiFi + ${data.ble_candidates} BLE co-traveling device(s) currently excluded.`;
+        loadSummary(); loadRemovalLog(); loadRemovalPoints();
+    });
+});
+
+loadSummary();
+loadRemovalLog();
+loadRemovalPoints();
+
+// --- Old vs new algorithm comparison (existing feature) ---
+const map = L.map('map').setView([55.7558, 37.6173], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+let layers = {};
+
+fetch('/api/sessions').then(r => r.json()).then(sessions => {
+    const sel = document.getElementById('sessionSelect');
+    sessions.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = `${s.filename} (${s.points_ok} ok / ${s.points_bad_gps} bad_gps)`;
+        sel.appendChild(opt);
+    });
+});
+
+function drawTrack(points, getter, color, dashed) {
+    const latlngs = points.filter(p => getter(p)).map(p => [getter(p).lat, getter(p).lon]);
+    const group = L.layerGroup();
+    if (latlngs.length > 1) {
+        L.polyline(latlngs, { color, weight: 3, dashArray: dashed ? '6 6' : null }).addTo(group);
+    }
+    return group;
+}
+
+function renderChart(summary) {
+    const rows = [
+        { key: 'wifi_old', label: 'WiFi (old)', color: '#7d97a8' },
+        { key: 'wifi_new', label: 'WiFi (new)', color: '#4da6ff' },
+        { key: 'ble_old', label: 'BLE (old)', color: '#6b8f7f' },
+        { key: 'ble_new', label: 'BLE (new)', color: '#3ddc97' },
+    ];
+    const maxErr = Math.max(1, ...rows.map(r => summary[r.key].avg_error_m || 0));
+    const barMaxW = 300;
+    let html = '';
+    rows.forEach(r => {
+        const s = summary[r.key];
+        const w = s.avg_error_m != null ? Math.max(4, (s.avg_error_m / maxErr) * barMaxW) : 0;
+        const text = s.avg_error_m != null ? `${s.avg_error_m.toFixed(0)} m (${s.matched_points} pts)` : 'no data';
+        html += `<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+            <div style="width:90px; font-size:0.85em; color:#ccc;">${r.label}</div>
+            <div style="background:${r.color}; height:16px; width:${w}px; border-radius:3px;"></div>
+            <div style="font-size:0.85em; color:#999;">${text}</div>
+        </div>`;
+    });
+    document.getElementById('errorChart').innerHTML = html;
+}
+
+document.getElementById('sessionSelect').addEventListener('change', (e) => {
+    const sessionId = e.target.value;
+    if (!sessionId) return;
+
+    fetch(`/api/reports/session_comparison?session_id=${sessionId}`).then(r => r.json()).then(data => {
+        if (data.error) { alert(data.error); return; }
+
+        Object.values(layers).forEach(l => { if (l) map.removeLayer(l); });
+
+        layers.gps = drawTrack(data.points, p => p.gps, '#e24b4a', false);
+        layers.wifiNew = drawTrack(data.points, p => p.wifi_new, '#4da6ff', false);
+        layers.wifiOld = drawTrack(data.points, p => p.wifi_old, '#7d97a8', true);
+        layers.bleNew = drawTrack(data.points, p => p.ble_new, '#3ddc97', false);
+        layers.bleOld = drawTrack(data.points, p => p.ble_old, '#6b8f7f', true);
+
+        if (document.getElementById('showGps').checked) layers.gps.addTo(map);
+        if (document.getElementById('showWifiNew').checked) layers.wifiNew.addTo(map);
+        if (document.getElementById('showWifiOld').checked) layers.wifiOld.addTo(map);
+        if (document.getElementById('showBleNew').checked) layers.bleNew.addTo(map);
+        if (document.getElementById('showBleOld').checked) layers.bleOld.addTo(map);
+
+        const allLatLngs = [];
+        data.points.forEach(p => {
+            [p.gps, p.wifi_new, p.ble_new].forEach(v => { if (v) allLatLngs.push([v.lat, v.lon]); });
+        });
+        if (allLatLngs.length) map.fitBounds(L.latLngBounds(allLatLngs), { maxZoom: 15 });
+
+        renderChart(data.summary);
+        document.getElementById('chartCard').style.display = 'block';
+        document.getElementById('mapControlsCard').style.display = 'block';
+    });
+});
+
+[['showGps','gps'], ['showWifiNew','wifiNew'], ['showWifiOld','wifiOld'],
+ ['showBleNew','bleNew'], ['showBleOld','bleOld']].forEach(([id, key]) => {
+    document.getElementById(id).addEventListener('change', (e) => {
+        const layer = layers[key];
+        if (!layer) return;
+        if (e.target.checked) layer.addTo(map);
+        else map.removeLayer(layer);
+    });
+});
+</script>
+{% endblock %}

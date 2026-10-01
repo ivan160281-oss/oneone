@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Roadmap - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">Roadmap</h2>
+    <p style="color:#999; font-size:0.9em;">
+        Общая доска задач/заметок/предложений по проекту — редактируется и Иваном, и Claude.
+        Каждая запись помечена автором и разделом; статус можно менять прямо здесь.
+    </p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Добавить запись</h3>
+    <form method="post" action="{{ url_for('roadmap_add') }}" style="display:flex; flex-wrap:wrap; gap:10px; align-items:end;">
+        <div>
+            <label>Раздел<br>
+                <select name="section" required>
+                    {% for sec in sections %}
+                        <option value="{{ sec.key }}">{{ sec.label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </div>
+        <div>
+            <label>Тип<br>
+                <select name="kind">
+                    <option value="task">Задача</option>
+                    <option value="note">Заметка</option>
+                    <option value="suggestion">Предложение</option>
+                </select>
+            </label>
+        </div>
+        <div>
+            <label>Автор<br>
+                <select name="author">
+                    <option value="Иван">Иван</option>
+                    <option value="Claude">Claude</option>
+                </select>
+            </label>
+        </div>
+        <div style="flex:1; min-width:200px;">
+            <label>Заголовок<br><input type="text" name="title" style="width:100%;" required></label>
+        </div>
+        <div style="flex:2; min-width:280px;">
+            <label>Описание (необязательно)<br><input type="text" name="body" style="width:100%;"></label>
+        </div>
+        <button type="submit">Добавить</button>
+    </form>
+</div>
+
+{% for sec in sections %}
+<div class="card">
+    <h3 style="margin-top:0;">{{ sec.label }}</h3>
+    {% if sec.entries %}
+    <table>
+        <thead>
+        <tr><th>Статус</th><th>Тип</th><th>Заголовок</th><th>Описание</th><th>Автор</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for it in sec.entries %}
+            <tr style="{{ 'opacity:0.55;' if it.status == 'done' else '' }}">
+                <td>
+                    <form method="post" action="{{ url_for('roadmap_set_status', item_id=it.id) }}" style="display:inline;">
+                        <select name="status" onchange="this.form.submit()">
+                            <option value="todo" {{ 'selected' if it.status == 'todo' else '' }}>To do</option>
+                            <option value="in_progress" {{ 'selected' if it.status == 'in_progress' else '' }}>В работе</option>
+                            <option value="done" {{ 'selected' if it.status == 'done' else '' }}>Готово</option>
+                        </select>
+                    </form>
+                </td>
+                <td>{{ {'task':'Задача','note':'Заметка','suggestion':'Предложение'}.get(it.kind, it.kind) }}</td>
+                <td><b>{{ it.title }}</b></td>
+                <td style="color:#999; font-size:0.9em;">{{ it.body or '' }}</td>
+                <td style="color:#999; font-size:0.85em;">{{ it.author or '' }}</td>
+                <td>
+                    <form method="post" action="{{ url_for('roadmap_delete', item_id=it.id) }}"
+                          onsubmit="return confirm('Удалить запись?');" style="display:inline;">
+                        <button type="submit" style="color:#e0743c;">×</button>
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+        <p style="color:#999;">Пока пусто.</p>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% endblock %}

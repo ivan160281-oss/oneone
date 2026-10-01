@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Users - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">Users</h2>
+    <div style="display:flex; gap:24px; margin-bottom:8px; flex-wrap:wrap;">
+        <div><b>{{ stats.total_users }}</b><br><span style="color:#999;">registered users</span></div>
+        <div><b>{{ stats.total_devices }}</b><br><span style="color:#999;">devices total</span></div>
+        <div><b>{{ stats.claimed_devices }}</b><br><span style="color:#999;">claimed by a user</span></div>
+        <div><b>{{ stats.unclaimed_devices }}</b><br><span style="color:#999;">unclaimed</span></div>
+        <div><b>{{ stats.users_with_device }}</b><br><span style="color:#999;">users with &ge;1 device</span></div>
+        <div><b>{{ stats.users_without_device }}</b><br><span style="color:#999;">users with no device yet</span></div>
+    </div>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Create a Monitoring account manually</h3>
+    <p style="color:#999; font-size:0.9em;">
+        Normally people register themselves at <code>/monitor/register</code> with
+        just an email - this form is for creating an account on someone's behalf
+        (or one without a real email, e.g. for testing).
+    </p>
+    <form method="post" action="{{ url_for('admin_users_create') }}" style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+        <div><label>Username/email<br><input type="text" name="username" required></label></div>
+        <div><label>Display name<br><input type="text" name="display_name"></label></div>
+        <div><label>Password<br><input type="text" name="password" required></label></div>
+        <button type="submit">Create</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Per-user breakdown</h3>
+    <div style="max-height:600px; overflow-y:auto;">
+    <table>
+        <thead>
+        <tr>
+            <th>Email / username</th><th>Display name</th><th>Registered</th>
+            <th>Devices</th><th>Points logged</th><th>Last device activity</th><th></th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for u in stats.per_user %}
+            <tr>
+                <td>{{ u.email or u.username }}</td>
+                <td>{{ u.display_name or '-' }}</td>
+                <td style="color:#999; font-size:0.9em;">{{ u.created_at }}</td>
+                <td>{{ u.device_count }}</td>
+                <td>{{ u.total_points }}</td>
+                <td style="color:#999; font-size:0.9em;">{{ u.last_device_activity or 'no data yet' }}</td>
+                <td style="white-space:nowrap;">
+                    <form method="post" action="{{ url_for('admin_users_password', user_id=u.id) }}" style="display:inline-flex; gap:4px;">
+                        <input type="text" name="password" placeholder="new password" style="width:110px;" required>
+                        <button type="submit">Reset</button>
+                    </form>
+                    <form method="post" action="{{ url_for('admin_users_delete', user_id=u.id) }}" style="display:inline;"
+                          onsubmit="return confirm('Delete this account? Their devices become unassigned, not deleted.');">
+                        <button type="submit" style="color:#e0743c;">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="7" style="color:#999;">No users registered yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endblock %}

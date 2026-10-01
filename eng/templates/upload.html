@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Upload logs - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">Upload log files</h2>
+    <p style="color:#999;">
+        Select one or more <code>log_YYYYMMDD_HHMMSS.txt</code> files copied from the
+        tracker's SD card (<code>/WIFIGPS</code> folder). Each upload adds to the
+        existing database - nothing gets overwritten.
+    </p>
+    <form method="post" enctype="multipart/form-data">
+        <input type="file" name="logfiles" accept=".txt" multiple required>
+        <button type="submit">Upload</button>
+    </form>
+</div>
+
+{% endblock %}

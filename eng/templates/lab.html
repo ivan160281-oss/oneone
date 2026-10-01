@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Point Lab - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">Point Lab</h2>
+    <p style="color:#999;">
+        Upload a <code>.txt</code> log with partially or fully missing GPS data (heavy on
+        <code>bad_gps</code> rows). This is a <b>scratch tool - nothing gets saved</b> to
+        the database. For every line it computes up to four position views against the
+        current network database, so you can compare them: the file's own recorded GPS
+        (where present), a WiFi-only reconstruction, a
+        BLE-only reconstruction, and a combined one.
+    </p>
+    <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <input type="file" id="labFile" accept=".txt">
+        <label><input type="checkbox" id="useStable"> Use "stable points" database (Algorithm Lab)</label>
+        <button id="analyzeBtn" type="button">Analyze</button>
+    </div>
+    <div id="labStatus" style="margin-top:10px; color:#999;"></div>
+</div>
+
+<div class="card" id="controlsCard" style="display:none;">
+    <label style="margin-right:16px;"><input type="checkbox" id="showGps" checked> <span style="color:#e24b4a;">&#9632;</span> GPS (recorded)</label>
+    <label style="margin-right:16px;"><input type="checkbox" id="showWifi" checked> <span style="color:#4da6ff;">&#9632;</span> WiFi-only estimate</label>
+    <label style="margin-right:16px;"><input type="checkbox" id="showBle" checked> <span style="color:#3ddc97;">&#9632;</span> BLE-only estimate</label>
+    <label><input type="checkbox" id="showCombined" checked> <span style="color:#f2a623;">&#9632;</span> Combined estimate</label>
+</div>
+
+<div class="card" style="padding:0; overflow:hidden;">
+    <div id="map" style="height: 560px; width: 100%; background:#000;"></div>
+</div>
+
+<div class="card" id="summaryCard" style="display:none;">
+    <h3 style="margin-top:0;">Summary</h3>
+    <div id="summaryText" style="color:#ccc;"></div>
+</div>
+
+<script src="{{ url_for('static', filename='vendor/leaflet/js/leaflet.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/css/leaflet.css') }}" />
+<script>
+const map = L.map('map').setView([55.7558, 37.6173], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+let layers = { gps: null, wifi: null, ble: null, combined: null };
+
+function drawLine(points, getter, color) {
+    const latlngs = points.filter(p => getter(p)).map(p => [getter(p).lat, getter(p).lon]);
+    const group = L.layerGroup();
+    if (latlngs.length > 1) {
+        L.polyline(latlngs, { color, weight: 3 }).addTo(group);
+    }
+    latlngs.forEach(ll => L.circleMarker(ll, { radius: 3, color, fillOpacity: 0.8 }).addTo(group));
+    return group;
+}
+
+document.getElementById('analyzeBtn').addEventListener('click', () => {
+    const fileInput = document.getElementById('labFile');
+    if (!fileInput.files.length) { alert('Choose a .txt file first.'); return; }
+
+    const fd = new FormData();
+    fd.append('logfile', fileInput.files[0]);
+    fd.append('use_stable', document.getElementById('useStable').checked ? 'true' : 'false');
+
+    document.getElementById('labStatus').textContent = 'Analyzing...';
+
+    fetch('/api/lab/analyze', { method: 'POST', body: fd }).then(r => r.json()).then(data => {
+        if (data.error) { document.getElementById('labStatus').textContent = 'Error: ' + data.error; return; }
+        document.getElementById('labStatus').textContent = `Analyzed ${data.points.length} line(s) from ${data.filename}.`;
+
+        Object.values(layers).forEach(l => { if (l) map.removeLayer(l); });
+
+        layers.gps = drawLine(data.points, p => p.gps, '#e24b4a');
+        layers.wifi = drawLine(data.points, p => p.wifi_only, '#4da6ff');
+        layers.ble = drawLine(data.points, p => p.ble_only, '#3ddc97');
+        layers.combined = drawLine(data.points, p => p.combined, '#f2a623');
+
+        if (document.getElementById('showGps').checked) layers.gps.addTo(map);
+        if (document.getElementById('showWifi').checked) layers.wifi.addTo(map);
+        if (document.getElementById('showBle').checked) layers.ble.addTo(map);
+        if (document.getElementById('showCombined').checked) layers.combined.addTo(map);
+
+        const allLatLngs = [];
+        data.points.forEach(p => {
+            [p.gps, p.wifi_only, p.ble_only, p.combined].forEach(v => { if (v) allLatLngs.push([v.lat, v.lon]); });
+        });
+        if (allLatLngs.length) map.fitBounds(L.latLngBounds(allLatLngs), { maxZoom: 15 });
+
+        const gpsCount = data.points.filter(p => p.gps).length;
+        const wifiCount = data.points.filter(p => p.wifi_only).length;
+        const bleCount = data.points.filter(p => p.ble_only).length;
+        const combinedCount = data.points.filter(p => p.combined).length;
+        const withHeading = data.points.filter(p => p.heading_deg != null).length;
+        document.getElementById('summaryText').innerHTML =
+            `${data.points.length} total lines &middot; `
+            + `GPS available: ${gpsCount} &middot; `
+            + `WiFi-only estimate possible: ${wifiCount} &middot; `
+            + `BLE-only estimate possible: ${bleCount} &middot; `
+            + `Combined estimate possible: ${combinedCount} &middot; `
+            + `lines with IMU heading/steps: ${withHeading}`;
+        document.getElementById('summaryCard').style.display = 'block';
+        document.getElementById('controlsCard').style.display = 'block';
+    }).catch(err => {
+        document.getElementById('labStatus').textContent = 'Error: ' + err;
+    });
+});
+
+['showGps', 'showWifi', 'showBle', 'showCombined'].forEach(id => {
+    document.getElementById(id).addEventListener('change', (e) => {
+        const key = { showGps: 'gps', showWifi: 'wifi', showBle: 'ble', showCombined: 'combined' }[id];
+        const layer = layers[key];
+        if (!layer) return;
+        if (e.target.checked) layer.addTo(map);
+        else map.removeLayer(layer);
+    });
+});
+</script>
+{% endblock %}

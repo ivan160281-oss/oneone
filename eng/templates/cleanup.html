@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+{% block title %}Cleanup - WiFi/GPS Tracker{% endblock %}
+{% block content %}
+
+<div class="card">
+    <h2 style="margin-top:0;">GPS jamming / spoofing cleanup</h2>
+    <p style="color:#999;">
+        Speed-outlier excursions (jamming/spoofing, using the threshold set on
+        <a href="{{ url_for('admin') }}">Admin</a>) and co-traveling WiFi/BLE devices
+        (car hotspot, earbuds, in-car multimedia) are now cleaned up <b>automatically</b>
+        after every upload and daily - see the <a href="{{ url_for('reports') }}">Reports</a>
+        page for what was removed and why. This page is for anything automatic cleanup
+        missed, or a spoofed jump too subtle to cross the speed threshold: <b>click
+        directly on a track segment</b> or a single point to act on just that one, or
+        <b>draw a box</b> around a whole cluster below.
+    </p>
+    <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <div>
+            <label>Session: </label>
+            <select id="sessionSelect">
+                <option value="">All sessions</option>
+            </select>
+        </div>
+        <button id="drawBtn" type="button">Draw selection box</button>
+        <span id="drawHint" style="color:#999; font-size:0.9em;"></span>
+    </div>
+    <div style="margin-top:10px; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <label><input type="checkbox" id="showJumps" checked> Show suspicious jumps (hint)</label>
+        <label>Threshold: <input type="number" id="jumpThreshold" value="{{ speed_threshold|round|int }}" min="50" step="10" style="width:70px; padding:4px; border-radius:4px; border:1px solid #444; background:#222; color:#eee;"> km/h (global - change on <a href="{{ url_for('admin') }}" style="color:#999;">Admin</a>)</label>
+    </div>
+</div>
+
+<div class="card" style="padding:0; overflow:hidden;">
+    <div id="map" style="height: 560px; width: 100%; background:#000;"></div>
+</div>
+
+<div class="card" id="previewCard" style="display:none;">
+    <h3 style="margin-top:0;">Selection preview</h3>
+    <p><b id="previewCount">0</b> point(s) selected.</p>
+    <div id="previewNetworks" style="max-height:220px; overflow-y:auto; margin-bottom:14px;"></div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button id="markBadBtn" type="button">Mark as bad_gps (undo window closes at next processing run)</button>
+        <button id="deleteBtn" type="button" style="background:#a83232;">Permanently delete</button>
+        <button id="cancelBtn" type="button" style="background:#444; color:#eee;">Cancel selection</button>
+    </div>
+    <div id="actionResult" style="margin-top:12px; color:#ccc;"></div>
+</div>
+
+<div class="card" style="color:#999; font-size:0.9em;">
+    <b>Suspicious jumps</b> (yellow dashed lines) are a heuristic hint, not an automatic
+    decision: consecutive points whose implied speed is implausible (default 200 km/h)
+    - a strong sign of jamming/spoofing or a GPS glitch, but not proof. Click one to
+    auto-select a small box around it for preview.
+</div>
+
+<script src="{{ url_for('static', filename='vendor/leaflet/js/leaflet.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/css/leaflet.css') }}" />
+<script>
+const map = L.map('map').setView([55.7558, 37.6173], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+let trackLayer = null;      // layer group of individual clickable segments
+let pointMarkers = [];
+let jumpsLayer = null;
+let currentPoints = [];     // last loaded points, with ids - {id, lat, lon, ts}
+
+function segmentPopupHtml(a, b) {
+    const dist = map.distance([a.lat, a.lon], [b.lat, b.lon]);
+    return `Segment: ${a.ts || '-'} &rarr; ${b.ts || '-'}<br>`
+        + `Length: ${(dist / 1000).toFixed(2)} km<br>`
+        + `<button id="selSeg_${a.id}_${b.id}">Select both endpoints</button> `
+        + `<button id="expSeg_${a.id}_${b.id}">Expand to whole excursion</button>`;
+}
+
+function pointPopupHtml(p) {
+    return `Point ${p.id}<br>${p.ts || '-'}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>`
+        + `<button id="selPt_${p.id}">Select this point</button>`;
+}
+
+function loadTrack(sessionId) {
+    const url = sessionId ? `/api/track?session_id=${sessionId}` : '/api/track';
+    fetch(url).then(r => r.json()).then(points => {
+        if (trackLayer) map.removeLayer(trackLayer);
+        pointMarkers.forEach(m => map.removeLayer(m));
+        pointMarkers = [];
+
+        currentPoints = points.filter(p => p.lat && p.lon);
+        trackLayer = L.layerGroup();
+
+        // One separately-clickable polyline per consecutive pair, so a single
+        // bad "spike" segment can be selected and removed on its own. Never
+        // connects points from different sessions (only matters when viewing
+        // "All sessions").
+        for (let i = 1; i < currentPoints.length; i++) {
+            const a = currentPoints[i - 1], b = currentPoints[i];
+            if (a.session_id !== b.session_id) continue;
+            const seg = L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {
+                color: 'red', weight: 3, opacity: 0.8
+            });
+            seg.bindPopup(segmentPopupHtml(a, b));
+            seg.on('popupopen', () => {
+                const selBtn = document.getElementById(`selSeg_${a.id}_${b.id}`);
+                if (selBtn) selBtn.addEventListener('click', () => {
+                    map.closePopup();
+                    selectPointIds([a.id, b.id]);
+                });
+                const expBtn = document.getElementById(`expSeg_${a.id}_${b.id}`);
+                if (expBtn) expBtn.addEventListener('click', () => {
+                    map.closePopup();
+                    expandExcursion(a, b);
+                });
+            });
+            // widen the invisible click target a bit so thin lines are easy to hit
+            seg.on('mouseover', () => seg.setStyle({ weight: 6 }));
+            seg.on('mouseout', () => seg.setStyle({ weight: 3 }));
+            seg.addTo(trackLayer);
+        }
+        trackLayer.addTo(map);
+
+        currentPoints.forEach(p => {
+            const m = L.circleMarker([p.lat, p.lon], { radius: 3, color: '#ff8888', fillOpacity: 0.8 });
+            m.bindPopup(pointPopupHtml(p));
+            m.on('popupopen', () => {
+                const btn = document.getElementById(`selPt_${p.id}`);
+                if (btn) btn.addEventListener('click', () => {
+                    map.closePopup();
+                    selectPointIds([p.id]);
+                });
+            });
+            m.addTo(map);
+            pointMarkers.push(m);
+        });
+
+        if (currentPoints.length > 0) {
+            const bounds = L.latLngBounds(currentPoints.map(p => [p.lat, p.lon]));
+            map.fitBounds(bounds, { maxZoom: 15 });
+        }
+    });
+}
+
+fetch('/api/sessions').then(r => r.json()).then(sessions => {
+    const sel = document.getElementById('sessionSelect');
+    sessions.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = `${s.filename} (${s.points_ok} ok / ${s.points_bad_gps} bad_gps)`;
+        sel.appendChild(opt);
+    });
+});
+document.getElementById('sessionSelect').addEventListener('change', (e) => {
+    loadTrack(e.target.value || null);
+    loadJumps();
+});
+
+function loadJumps() {
+    if (jumpsLayer) { map.removeLayer(jumpsLayer); jumpsLayer = null; }
+    if (!document.getElementById('showJumps').checked) return;
+
+    const sessionId = document.getElementById('sessionSelect').value || null;
+    const threshold = document.getElementById('jumpThreshold').value || 150;
+    const params = new URLSearchParams({ threshold_kmh: threshold });
+    if (sessionId) params.set('session_id', sessionId);
+
+    fetch(`/api/suspicious_jumps?${params.toString()}`).then(r => r.json()).then(jumps => {
+        jumpsLayer = L.layerGroup();
+        jumps.forEach(j => {
+            const line = L.polyline(
+                [[j.from_lat, j.from_lon], [j.to_lat, j.to_lon]],
+                { color: '#ffe066', weight: 3, dashArray: '6 6' }
+            );
+            line.bindPopup(
+                `Implied speed: ${j.speed_kmh.toFixed(0)} km/h over ${j.dt_seconds.toFixed(0)}s`
+                + `<br><button id="selJump${j.to_point_id}">Select this jump</button>`
+            );
+            line.on('popupopen', () => {
+                document.getElementById(`selJump${j.to_point_id}`).addEventListener('click', () => {
+                    map.closePopup();
+                    selectPointIds([j.from_point_id, j.to_point_id]);
+                });
+            });
+            line.addTo(jumpsLayer);
+        });
+        jumpsLayer.addTo(map);
+    });
+}
+
+document.getElementById('showJumps').addEventListener('change', loadJumps);
+document.getElementById('jumpThreshold').addEventListener('change', loadJumps);
+
+// --- Rectangle selection (plain Leaflet mouse events, no plugin needed) ---
+let drawing = false;
+let drawRect = null;
+let startLatLng = null;
+let selectedBounds = null;
+let lastPointIds = [];
+let lastAction = null;
+
+const drawBtn = document.getElementById('drawBtn');
+const drawHint = document.getElementById('drawHint');
+
+drawBtn.addEventListener('click', () => {
+    drawing = true;
+    drawHint.textContent = 'Click and drag on the map to draw a box.';
+    map.dragging.disable();
+});
+
+map.on('mousedown', (e) => {
+    if (!drawing) return;
+    startLatLng = e.latlng;
+    if (drawRect) map.removeLayer(drawRect);
+    drawRect = L.rectangle([startLatLng, startLatLng], { color: '#f2a623', weight: 2, fillOpacity: 0.1 }).addTo(map);
+});
+
+map.on('mousemove', (e) => {
+    if (!drawing || !startLatLng) return;
+    drawRect.setBounds([startLatLng, e.latlng]);
+});
+
+map.on('mouseup', (e) => {
+    if (!drawing || !startLatLng) return;
+    drawRect.setBounds([startLatLng, e.latlng]);
+    selectedBounds = drawRect.getBounds();
+    drawing = false;
+    startLatLng = null;
+    map.dragging.enable();
+    drawHint.textContent = '';
+    runPreview();
+});
+
+function previewSelection(payload) {
+    fetch('/api/cleanup/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    }).then(r => r.json()).then(data => {
+        lastPointIds = data.point_ids;
+        document.getElementById('previewCount').textContent = data.point_count;
+
+        const netDiv = document.getElementById('previewNetworks');
+        let html = '';
+        if (data.wifi_networks.length) {
+            html += '<b>WiFi networks tied to these points:</b><br>';
+            data.wifi_networks.forEach(n => {
+                html += `${n.ssid || '(hidden)'} (${n.bssid || 'no bssid'}) - seen ${n.hits}x here<br>`;
+            });
+        }
+        if (data.ble_devices && data.ble_devices.length) {
+            html += '<br><b>BLE devices tied to these points:</b><br>';
+            data.ble_devices.forEach(n => {
+                html += `${n.mac} - seen ${n.hits}x here<br>`;
+            });
+        }
+        if (!data.wifi_networks.length && !(data.ble_devices && data.ble_devices.length)) {
+            html = '<span style="color:#999;">No WiFi/BLE signals tied to these points.</span>';
+        }
+        netDiv.innerHTML = html;
+
+        document.getElementById('actionResult').textContent = '';
+        document.getElementById('previewCard').style.display = data.point_count > 0 ? 'block' : 'none';
+    });
+}
+
+// Used when the person clicks a specific track segment or point directly,
+// instead of drawing a box - selects exactly those point(s), nothing more.
+function selectPointIds(ids) {
+    if (drawRect) { map.removeLayer(drawRect); drawRect = null; }
+    previewSelection({ point_ids: ids });
+}
+
+// Walks outward from the clicked segment to grab the WHOLE corrupted run in
+// one go (see db.find_excursion) instead of just the two clicked points -
+// this is what fixes the "remove one point, an almost identical long segment
+// reappears" cycle: a jamming event usually corrupts several consecutive
+// fixes, not just one.
+function expandExcursion(a, b) {
+    const threshold = document.getElementById('jumpThreshold').value || 150;
+    fetch('/api/cleanup/expand_excursion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            session_id: a.session_id, point_id_a: a.id, point_id_b: b.id,
+            threshold_kmh: threshold
+        })
+    }).then(r => r.json()).then(data => {
+        if (data.error) { alert(data.error); return; }
+        if (data.point_ids.length === 0) {
+            alert('Could not expand further than the two clicked points - try "Select both endpoints" instead.');
+            return;
+        }
+        selectPointIds(data.point_ids);
+    });
+}
+
+function runPreview() {
+    const b = selectedBounds;
+    const sessionId = document.getElementById('sessionSelect').value || null;
+    previewSelection({
+        min_lat: b.getSouth(), max_lat: b.getNorth(),
+        min_lon: b.getWest(), max_lon: b.getEast(),
+        session_id: sessionId
+    });
+}
+
+document.getElementById('cancelBtn').addEventListener('click', () => {
+    if (drawRect) { map.removeLayer(drawRect); drawRect = null; }
+    document.getElementById('previewCard').style.display = 'none';
+});
+
+function applyAction(action, confirmMsg) {
+    if (!lastPointIds.length) return;
+    if (!confirm(confirmMsg)) return;
+    fetch('/api/cleanup/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ point_ids: lastPointIds, action })
+    }).then(r => r.json()).then(data => {
+        lastAction = action;
+        const box = document.getElementById('actionResult');
+        if (data.error) {
+            box.textContent = 'Error: ' + data.error;
+            return;
+        }
+        box.innerHTML = `Done - ${data.affected_points} point(s) ${action === 'delete' ? 'deleted' : 'marked bad_gps'}.`
+            + (action === 'mark_bad_gps' ? ' <button id="undoBtn" type="button">Undo</button>' : '');
+        if (action === 'mark_bad_gps') {
+            document.getElementById('undoBtn').addEventListener('click', undoLast);
+        }
+        loadTrack(document.getElementById('sessionSelect').value || null);
+    });
+}
+
+function undoLast() {
+    fetch('/api/cleanup/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ point_ids: lastPointIds })
+    }).then(r => r.json()).then(data => {
+        document.getElementById('actionResult').textContent = `Restored ${data.restored_points} point(s).`;
+        loadTrack(document.getElementById('sessionSelect').value || null);
+    });
+}
+
+document.getElementById('markBadBtn').addEventListener('click', () => {
+    applyAction('mark_bad_gps',
+        `Mark ${lastPointIds.length} point(s) as bad_gps? Undo works right away, but the next automatic processing run (after any upload, or once a day) permanently deletes anything still bad_gps at that point.`);
+});
+document.getElementById('deleteBtn').addEventListener('click', () => {
+    applyAction('delete',
+        `PERMANENTLY DELETE ${lastPointIds.length} point(s) and their WiFi/BLE observations? This cannot be undone.`);
+});
+
+loadTrack(null);
+loadJumps();
+
+</script>
+{% endblock %}
