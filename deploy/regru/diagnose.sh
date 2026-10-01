@@ -4,6 +4,8 @@ DOMAIN="${1:?usage: diagnose.sh <domain>}"
 SITE_DIR="$HOME/www/$DOMAIN"
 cd "$HOME"
 
+echo "== device password (sha256 of WIFIGPS_PASSWORD, compare with the firmware's)"
+grep -E '^WIFIGPS_PASSWORD=' "$HOME/altgeo.env" | cut -d= -f2- | tr -d '\r\n' | sha256sum
 echo "== data folders"; ls -laR "$HOME/altgeo-data" 2>&1 | head -60
 echo "== database files anywhere in home"
 find "$HOME" -maxdepth 5 \( -iname '*.db' -o -iname '*wifigps*' -o -iname 'import' \) -not -path '*/venv/*' -printf '%TY-%Tm-%Td %TH:%TM %10s %p\n' 2>/dev/null | sort | tail -30
