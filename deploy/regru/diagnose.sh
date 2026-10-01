@@ -41,3 +41,18 @@ ls -la "$HOME/logs" 2>/dev/null
 for f in $(ls -t "$HOME"/logs/*error* "$HOME"/logs/*"$DOMAIN"* 2>/dev/null | head -4); do
   echo "--- $f"; tail -15 "$f"
 done
+echo "== GSM tracker requests (/api/device/points)"
+for f in $(ls -t "$HOME"/logs/*access* 2>/dev/null | head -2); do
+  echo "--- $f"; grep 'device/points' "$f" | tail -15
+done
+echo "--- test POST with a wrong password (the app should answer 401)"
+curl -s -m 30 -o /dev/null -w '%{http_code}\n' -X POST -H 'X-Sync-Password: wrong' -H 'X-Device-IMEI: 000000000000000' \
+  -H 'Content-Type: application/json' --data '{"points":[]}' "http://$DOMAIN/api/device/points"
+echo "--- newest GSM points in the main database"
+DBF=$(grep -E '^ALTGEO_DB=' "$HOME/altgeo.env" | cut -d= -f2-); DBF="${DBF:-$HOME/altgeo-data/altgeo.db}"
+"$HOME/altgeo/venv/bin/python" - "$DBF" <<'PY'
+import sqlite3, sys, time
+c = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True)
+for k, n, t in c.execute("SELECT source_key, COUNT(*), MAX(ts) FROM raw_points WHERE source_key LIKE 'imei:%' GROUP BY source_key"):
+    print(k[:9] + "...", n, "points, last", time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(t)))
+PY
