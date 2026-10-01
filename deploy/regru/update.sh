@@ -84,3 +84,11 @@ else
   tail -5 "$HOME/logs/$DOMAIN.error.log" 2>/dev/null || true
   exit 1
 fi
+
+# The engineering part must answer too, and only to the admin: a guest gets a redirect.
+ENG=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -m 60 "http://$DOMAIN/eng/map" || true)
+echo "http://$DOMAIN/eng/map (no login) -> $ENG"
+case "$ENG" in
+  30[27]\ http://$DOMAIN/) ;;
+  *) tail -5 "$HOME/logs/$DOMAIN.error.log" 2>/dev/null || true; exit 1 ;;
+esac
