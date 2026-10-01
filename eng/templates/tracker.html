@@ -301,8 +301,8 @@ $('monStart').addEventListener('click', async () => {
   try {
     if (transport) { try { await transport.disconnect(); } catch (e) {} transport = null; esploader = null;
       $('connectBtn').hidden = false; $('disconnectBtn').hidden = true; setStatus('connStatus', '', 'Трекер не подключён'); refreshSteps(); }
-    const known = await navigator.serial.getPorts();
-    monPort = known.length === 1 ? known[0] : await navigator.serial.requestPort({});
+    // Always ask: an earlier permitted port may belong to another device.
+    monPort = await navigator.serial.requestPort({});
     await monPort.open({ baudRate: 115200 });
     $('serial').hidden = false; $('serial').textContent = ''; monText = '';
     setStatus('monStatus', 'busy', 'Перезапускаю трекер и читаю журнал…');
