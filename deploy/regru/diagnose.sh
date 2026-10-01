@@ -43,8 +43,11 @@ for f in $(ls -t "$HOME"/logs/*error* "$HOME"/logs/*"$DOMAIN"* 2>/dev/null | hea
 done
 echo "== GSM tracker requests (/api/device/points)"
 for f in $(ls -t "$HOME"/logs/*access* 2>/dev/null | head -2); do
-  echo "--- $f"; grep 'device/points' "$f" | tail -15
+  echo "--- $f ($(wc -l < "$f") lines, newest:)"; tail -2 "$f" | cut -c1-200
+  echo "-- requests without a browser referrer to /api:"; grep '/api/device\|/api/upload\|/api/sync' "$f" | tail -15
 done
+echo "--- plain http answer for the tracker address (expect 405/422, not a redirect)"
+curl -s -m 30 -o /dev/null -w '%{http_code} %{redirect_url}\n' "http://$DOMAIN/api/device/points"
 echo "--- test POST with a wrong password (the app should answer 401)"
 curl -s -m 30 -o /dev/null -w '%{http_code}\n' -X POST -H 'X-Sync-Password: wrong' -H 'X-Device-IMEI: 000000000000000' \
   -H 'Content-Type: application/json' --data '{"points":[]}' "http://$DOMAIN/api/device/points"
