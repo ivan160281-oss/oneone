@@ -44,7 +44,6 @@ sed -e "s|__APP_DIR__|$APP_DIR|" -e "s|__ENV_FILE__|$ENV_FILE|" \
 FORCE_HTTPS=$(grep -E '^FORCE_HTTPS=' "$ENV_FILE" | cut -d= -f2 || true)
 {
   echo "PassengerEnabled On"
-  echo "PassengerPython $APP_DIR/venv/bin/python"
   if [ "$FORCE_HTTPS" = "1" ]; then
     # The GSM tracker posts over plain HTTP and can't follow redirects.
     echo "RewriteEngine On"
@@ -63,3 +62,12 @@ done
 mkdir -p "$SITE_DIR/tmp"
 touch "$SITE_DIR/tmp/restart.txt"
 echo "Deployed to $DOMAIN"
+
+# Report how the live site answers; a failure here shows up in the GitHub log.
+sleep 3
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 60 "http://$DOMAIN/" || true)
+echo "http://$DOMAIN/ -> HTTP $CODE"
+if [ "$CODE" != "200" ]; then
+  tail -5 "$HOME/logs/$DOMAIN.error.log" 2>/dev/null || true
+  exit 1
+fi

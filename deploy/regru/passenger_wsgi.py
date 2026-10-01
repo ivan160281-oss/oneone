@@ -9,6 +9,12 @@ import sys
 
 APP_DIR = "__APP_DIR__"
 ENV_FILE = "__ENV_FILE__"
+INTERP = os.path.join(APP_DIR, "venv", "bin", "python")
+
+# REG.RU doesn't allow PassengerPython in .htaccess, so Passenger starts this
+# file with the system Python: switch to the app's venv before importing.
+if sys.executable != INTERP and os.path.exists(INTERP):
+    os.execl(INTERP, INTERP, *sys.argv)
 
 sys.path.insert(0, APP_DIR)
 
