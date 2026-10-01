@@ -59,15 +59,22 @@ for f in index.html index.php; do
   if [ -f "$SITE_DIR/$f" ]; then mv "$SITE_DIR/$f" "$SITE_DIR/$f.bak"; fi
 done
 
+# An early version left its database in the public folder: move it out of reach.
+for f in "$SITE_DIR"/*.db "$SITE_DIR"/*.db-wal "$SITE_DIR"/*.db-shm; do
+  [ -f "$f" ] && mv "$f" "$HOME/altgeo-data/old-site-$(basename "$f")"
+done
+
 mkdir -p "$SITE_DIR/tmp"
 touch "$SITE_DIR/tmp/restart.txt"
 echo "Deployed to $DOMAIN"
 
-# Report how the live site answers; a failure here shows up in the GitHub log.
+# Check that the live site is the app and not a hosting placeholder (those answer 200 too).
 sleep 3
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 60 "http://$DOMAIN/" || true)
-echo "http://$DOMAIN/ -> HTTP $CODE"
-if [ "$CODE" != "200" ]; then
+BODY=$(curl -s -m 60 "http://$DOMAIN/" || true)
+if printf '%s' "$BODY" | grep -q 'ALTGEO'; then
+  echo "http://$DOMAIN/ serves ALTGEO"
+else
+  echo "http://$DOMAIN/ does not serve ALTGEO: $(printf '%s' "$BODY" | grep -o '<title>[^<]*' | head -1)"
   tail -5 "$HOME/logs/$DOMAIN.error.log" 2>/dev/null || true
   exit 1
 fi

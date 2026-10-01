@@ -27,6 +27,9 @@ for f in /etc/nginx/vhosts/$USER/$DOMAIN.conf /etc/httpd/conf/vhosts/$USER/$DOMA
   [ -r "$f" ] && { echo "--- $f"; grep -v '^\s*#' "$f" | grep -v '^\s*$' | head -80; }
 done
 echo "== passenger"
+for f in /etc/httpd/conf.d/passenger.conf /etc/httpd/conf.d/README /etc/httpd/conf.d/disabled.conf \
+         /etc/httpd/conf.d/fakephp.conf; do echo "--- $f"; cat "$f"; done
+ls -la "$HOME/www"
 command -v passenger-config passenger-status; ls -d /opt/passenger* /usr/share/passenger* 2>/dev/null
 echo "== logs"
 ls -la "$HOME/logs" 2>/dev/null
