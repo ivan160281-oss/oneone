@@ -9,21 +9,25 @@ echo "== .htaccess"; cat "$SITE_DIR/.htaccess"
 echo "== python"; "$HOME/altgeo/venv/bin/python" -V
 echo "== import passenger_wsgi"
 (cd "$SITE_DIR" && "$HOME/altgeo/venv/bin/python" -c "import passenger_wsgi; print('import ok')") 2>&1 | tail -20
-echo "== request through the app"
-(cd "$SITE_DIR" && "$HOME/altgeo/venv/bin/python" - <<'PY'
-import io, passenger_wsgi
-env = {"REQUEST_METHOD": "GET", "PATH_INFO": "/", "SERVER_NAME": "x", "SERVER_PORT": "80",
-       "wsgi.url_scheme": "http", "wsgi.input": io.BytesIO(), "wsgi.errors": io.StringIO(),
-       "SERVER_PROTOCOL": "HTTP/1.1", "QUERY_STRING": ""}
-out = []
-body = passenger_wsgi.application(env, lambda s, h, e=None: out.append(s))
-print(out, b"".join(body)[:80])
-PY
-) 2>&1 | tail -20
-echo "== live site"
-curl -s -m 30 -D - "http://$DOMAIN/" | head -30
+echo "== live site (nginx)"
+curl -s -m 30 -D - -o /tmp/altgeo-live.html "http://$DOMAIN/" | head -12
+grep -o '<title>[^<]*' /tmp/altgeo-live.html
+echo "== apache directly"
+curl -s -m 30 -D - -o /tmp/altgeo-apache.html -H "Host: $DOMAIN" "http://127.0.0.1:8080/" | head -12
+grep -o '<title>[^<]*' /tmp/altgeo-apache.html
+echo "== api route"
+curl -s -m 30 -D - "http://$DOMAIN/api/me" | head -15
+echo "== web server config for the site"
+for d in /etc/nginx/vhosts/$USER /etc/nginx/vhosts-resources/$DOMAIN /etc/httpd/conf/vhosts/$USER \
+         /etc/apache2/vhosts/$USER /etc/nginx/conf.d /etc/httpd/conf.d; do
+  [ -e "$d" ] && { echo "--- $d"; ls -la "$d" 2>&1 | head -20; }
+done
+for f in /etc/nginx/vhosts/$USER/$DOMAIN.conf /etc/httpd/conf/vhosts/$USER/$DOMAIN.conf \
+         /etc/apache2/vhosts/$USER/$DOMAIN.conf; do
+  [ -r "$f" ] && { echo "--- $f"; grep -v '^\s*#' "$f" | grep -v '^\s*$' | head -80; }
+done
 echo "== passenger"
-ls -la /opt/python 2>/dev/null; command -v python3 python; python3 -V
+command -v passenger-config passenger-status; ls -d /opt/passenger* /usr/share/passenger* 2>/dev/null
 echo "== logs"
 ls -la "$HOME/logs" 2>/dev/null
 for f in $(ls -t "$HOME"/logs/*error* "$HOME"/logs/*"$DOMAIN"* 2>/dev/null | head -4); do
