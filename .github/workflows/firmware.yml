@@ -27,8 +27,8 @@ jobs:
           mkdir -p fw
           fetch() {  # repo artifact key
             local meta id sha date
-            meta=$(gh api "repos/ivan160281-oss/$1/actions/artifacts?name=$2&per_page=10" \
-              -q '[.artifacts[] | select(.expired | not)][0] | [.id, .workflow_run.head_sha, .created_at] | @tsv')
+            meta=$(gh api "repos/ivan160281-oss/$1/actions/artifacts?name=$2&per_page=50" \
+              -q '[.artifacts[] | select((.expired | not) and .workflow_run.head_branch == "main")][0] | [.id, .workflow_run.head_sha, .created_at] | @tsv')
             [ -n "$meta" ] || { echo "No build of $2 in $1"; return 1; }
             read -r id sha date <<<"$meta"
             gh api "repos/ivan160281-oss/$1/actions/artifacts/$id/zip" > "fw/$3.zip"
